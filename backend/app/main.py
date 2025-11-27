@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from app.api.v1 import auth
 from app.db.base import Base
 from app.db.session import engine
-from app.models import student  # noqa: F401  # ensure models are imported
+from app.models import student  
 
 
 def create_application() -> FastAPI:

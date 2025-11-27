@@ -1,75 +1,238 @@
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+
+import { ConfirmModal } from "../components/ConfirmModal";
+import { CreateTeamModal } from "../components/CreateTeamModal";
+import { EditTeamModal } from "../components/EditTeamModal";
+import { Header } from "../components/Header";
+
 type Team = {
   id: number;
   name: string;
   projectCount: number;
 };
 
+// Mock данные для демонстрации - заменить на реальные данные из API
 const mockTeams: Team[] = [];
 
 export const Dashboard = () => {
-  const teams = mockTeams;
+  const navigate = useNavigate();
+  const [teams, setTeams] = useState<Team[]>(mockTeams);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [editingTeam, setEditingTeam] = useState<Team | null>(null);
+  const [deletingTeam, setDeletingTeam] = useState<Team | null>(null);
 
-  if (teams.length === 0) {
-    return (
-      <div
-        style={{
-          margin: "4rem auto",
-          maxWidth: "560px",
-          padding: "2.5rem",
-          borderRadius: "18px",
-          background: "rgba(255,255,255,0.9)",
-          boxShadow: "0 20px 45px rgba(30, 64, 175, 0.12)",
-          textAlign: "center"
-        }}
-      >
-        <h1 style={{ fontSize: "1.8rem", marginBottom: "0.75rem", color: "#1d4ed8" }}>Создайте свою команду</h1>
-        <p style={{ color: "#475569", marginBottom: "1.5rem" }}>
-          Пока вы не присоединились ни к одной команде. Создайте команду, чтобы вести проект и строить обратную диаграмму
-          Ганта.
-        </p>
-        <button
-          type="button"
-          style={{
-            padding: "0.9rem 2.2rem",
-            borderRadius: "14px",
-            border: "none",
-            fontSize: "1rem",
-            fontWeight: 600,
-            color: "#ffffff",
-            background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
-            boxShadow: "0 15px 32px rgba(37, 99, 235, 0.24)",
-            cursor: "pointer"
-          }}
-          onClick={() => {
-            // TODO: заменить на реальное действие (открыть модалку/перейти на форму создания команды)
-            alert("Здесь появится создание команды");
-          }}
-        >
-          Создать команду
-        </button>
-      </div>
-    );
-  }
+  const handleCreateTeam = (name: string) => {
+    // TODO: заменить на реальный API запрос
+    const newTeam: Team = {
+      id: Date.now(),
+      name,
+      projectCount: 0
+    };
+    setTeams([...teams, newTeam]);
+  };
+
+  const handleEditTeam = (team: Team) => {
+    setEditingTeam(team);
+    setIsEditModalOpen(true);
+  };
+
+  const handleUpdateTeam = (name: string) => {
+    if (editingTeam) {
+      setTeams(teams.map((t) => (t.id === editingTeam.id ? { ...t, name } : t)));
+      setEditingTeam(null);
+    }
+  };
+
+  const handleDeleteTeam = (team: Team) => {
+    setDeletingTeam(team);
+    setIsDeleteModalOpen(true);
+  };
+
+  const handleConfirmDeleteTeam = () => {
+    if (deletingTeam) {
+      setTeams(teams.filter((t) => t.id !== deletingTeam.id));
+      setDeletingTeam(null);
+    }
+  };
+
+  const handleTeamClick = (teamId: number) => {
+    navigate(`/teams/${teamId}`);
+  };
 
   return (
-    <div style={{ padding: "3rem" }}>
-      <h1 style={{ fontSize: "2rem", marginBottom: "1.5rem", color: "#1d4ed8" }}>Мои команды</h1>
-      <div style={{ display: "grid", gap: "1.5rem", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
-        {teams.map((team) => (
+    <div style={{ paddingTop: "80px", minHeight: "100vh" }}>
+      <Header />
+      <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "2rem" }}>
+        {teams.length === 0 ? (
           <div
-            key={team.id}
             style={{
-              background: "#ffffff",
-              borderRadius: "16px",
-              padding: "1.75rem",
-              boxShadow: "0 14px 32px rgba(15, 23, 42, 0.12)"
+              margin: "4rem auto",
+              maxWidth: "560px",
+              padding: "2.5rem",
+              borderRadius: "18px",
+              background: "rgba(255,255,255,0.9)",
+              boxShadow: "0 20px 45px rgba(30, 64, 175, 0.12)",
+              textAlign: "center"
             }}
           >
-            <h2 style={{ fontSize: "1.25rem", marginBottom: "0.5rem", color: "#0f172a" }}>{team.name}</h2>
-            <p style={{ color: "#475569" }}>Проектов: {team.projectCount}</p>
+            <h1 style={{ fontSize: "1.8rem", marginBottom: "0.75rem", color: "#1d4ed8" }}>Создайте свою команду</h1>
+            <p style={{ color: "#475569", marginBottom: "1.5rem" }}>
+              Пока вы не присоединились ни к одной команде. Создайте команду, чтобы вести проект и строить обратную
+              диаграмму Ганта.
+            </p>
+            <button
+              type="button"
+              onClick={() => setIsCreateModalOpen(true)}
+              style={{
+                padding: "0.9rem 2.2rem",
+                borderRadius: "14px",
+                border: "none",
+                fontSize: "1rem",
+                fontWeight: 600,
+                color: "#ffffff",
+                background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                boxShadow: "0 15px 32px rgba(37, 99, 235, 0.24)",
+                cursor: "pointer",
+                transition: "transform 0.15s ease"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = "translateY(-1px)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "translateY(0)";
+              }}
+            >
+              Создать команду
+            </button>
           </div>
-        ))}
+        ) : (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
+              <h1 style={{ fontSize: "2rem", color: "#1d4ed8" }}>Мои команды</h1>
+              <button
+                type="button"
+                onClick={() => setIsCreateModalOpen(true)}
+                style={{
+                  padding: "0.75rem 1.5rem",
+                  borderRadius: "12px",
+                  border: "none",
+                  fontSize: "1rem",
+                  fontWeight: 600,
+                  color: "#ffffff",
+                  background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                  boxShadow: "0 12px 24px rgba(37, 99, 235, 0.22)",
+                  cursor: "pointer",
+                  transition: "transform 0.15s ease"
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = "translateY(-1px)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                }}
+              >
+                + Создать команду
+              </button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+              {teams.map((team) => (
+                <div
+                  key={team.id}
+                  style={{
+                    background: "#ffffff",
+                    borderRadius: "16px",
+                    padding: "1.5rem",
+                    boxShadow: "0 14px 32px rgba(15, 23, 42, 0.12)",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start"
+                  }}
+                >
+                  <div
+                    onClick={() => handleTeamClick(team.id)}
+                    style={{
+                      flex: 1,
+                      cursor: "pointer"
+                    }}
+                  >
+                    <h2 style={{ fontSize: "1.25rem", marginBottom: "0.5rem", color: "#0f172a" }}>{team.name}</h2>
+                    <p style={{ color: "#475569" }}>Проектов: {team.projectCount}</p>
+                  </div>
+                  <div style={{ display: "flex", gap: "0.5rem", marginLeft: "1rem" }}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleEditTeam(team);
+                      }}
+                      style={{
+                        padding: "0.5rem 1rem",
+                        borderRadius: "10px",
+                        border: "1px solid rgba(59, 130, 246, 0.3)",
+                        background: "rgba(59, 130, 246, 0.1)",
+                        color: "#3b82f6",
+                        fontSize: "0.9rem",
+                        fontWeight: 600,
+                        cursor: "pointer"
+                      }}
+                    >
+                      ✏️ Изменить
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteTeam(team);
+                      }}
+                      style={{
+                        padding: "0.5rem 1rem",
+                        borderRadius: "10px",
+                        border: "1px solid rgba(239, 68, 68, 0.3)",
+                        background: "rgba(239, 68, 68, 0.1)",
+                        color: "#ef4444",
+                        fontSize: "0.9rem",
+                        fontWeight: 600,
+                        cursor: "pointer"
+                      }}
+                    >
+                      🗑️ Удалить
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
+      <CreateTeamModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onSubmit={handleCreateTeam}
+      />
+
+      <EditTeamModal
+        isOpen={isEditModalOpen}
+        onClose={() => {
+          setIsEditModalOpen(false);
+          setEditingTeam(null);
+        }}
+        onSubmit={handleUpdateTeam}
+        currentName={editingTeam?.name}
+      />
+
+      <ConfirmModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => {
+          setIsDeleteModalOpen(false);
+          setDeletingTeam(null);
+        }}
+        onConfirm={handleConfirmDeleteTeam}
+        title="Удалить команду?"
+        message="Вы действительно хотите удалить команду? Все проекты этой команды также будут удалены."
+        confirmText="Удалить"
+        danger={true}
+      />
     </div>
   );
 };

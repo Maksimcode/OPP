@@ -182,6 +182,214 @@ body {
   color: #15803d;
 }
 
+.gantt-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  padding-bottom: 1.5rem;
+  background: rgba(248, 250, 252, 0.95);
+}
+
+.gantt-table {
+  min-width: 900px;
+  background: rgba(255, 255, 255, 0.98);
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  box-shadow: 0 25px 50px rgba(15, 23, 42, 0.1);
+}
+
+.gantt-header-row,
+.gantt-row {
+  display: grid;
+  align-items: stretch;
+}
+
+.gantt-header-cell {
+  text-align: center;
+  font-size: 0.9rem;
+  color: #475569;
+  padding: 0.5rem 0.25rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.3);
+  min-height: 48px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.gantt-header-cell.label {
+  text-align: left;
+  padding-left: 1rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.gantt-label-cell {
+  padding: 0.75rem 1rem;
+  border-right: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(248, 250, 252, 0.85);
+  min-height: 100px;
+  display: flex;
+  align-items: center;
+}
+
+.gantt-grid {
+  display: grid;
+  position: relative;
+  background: rgba(255, 255, 255, 0.98);
+  min-height: 100px;
+}
+
+.gantt-cell {
+  min-height: 100px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.6);
+}
+
+.gantt-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 600;
+  font-size: 0.9rem;
+  background: linear-gradient(135deg, #1d4ed8, #3b82f6);
+  border-radius: 999px;
+  height: 36px;
+  margin: 0.75rem;
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.3);
+  cursor: pointer;
+}
+
+.gantt-bar.project {
+  background: linear-gradient(135deg, #2563eb, #60a5fa);
+}
+
+.gantt-bar.stage {
+  background: linear-gradient(135deg, #0ea5e9, #38bdf8);
+}
+
+.gantt-bar.task {
+  background: linear-gradient(135deg, #10b981, #34d399);
+}
+
+.gantt-bar.completed {
+  opacity: 0.55;
+}
+
+.responsible-cell {
+  padding: 0.75rem;
+  border-right: 1px solid rgba(148, 163, 184, 0.18);
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  align-items: center;
+  min-height: 100px;
+  background: rgba(248, 250, 252, 0.85);
+}
+
+.stage-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.stage-main {
+  flex: 1;
+}
+
+.stage-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.stage-actions button {
+  padding: 0.4rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: white;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+}
+
+.stage-actions button:hover {
+  background: rgba(148, 163, 184, 0.15);
+}
+
+.stage-actions button.danger {
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #dc2626;
+}
+
+.gantt-label-cell.task {
+  background: rgba(248, 250, 252, 0.8);
+}
+
+.task-label {
+  flex: 1;
+}
+
+.responsible-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.15);
+  color: #1d4ed8;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin: 0.35rem 0;
+}
+
+.responsible-chip.ghost {
+  background: rgba(148, 163, 184, 0.2);
+  color: #475569;
+}
+
+.tree-actions {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+.tree-actions.inline {
+  margin-top: 0.25rem;
+}
+
+.tree-actions button {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: white;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: #2563eb;
+  cursor: pointer;
+}
+
+.tree-actions button.danger {
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #dc2626;
+}
+
+.tree-actions button:hover {
+  background: rgba(148, 163, 184, 0.15);
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
 @media (max-width: 520px) {
   .auth-shell {
     padding: 2.25rem 2rem;
