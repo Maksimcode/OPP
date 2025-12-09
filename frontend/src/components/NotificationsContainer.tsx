@@ -1,20 +1,39 @@
+import { useNavigate } from "react-router-dom";
+
+import { teamsApi } from "../api/teams";
 import { useNotificationsContext } from "../context/NotificationsContext";
 import { TeamInviteNotification } from "./TeamInviteNotification";
 
 export const NotificationsContainer = () => {
-  const { invites, removeInvite } = useNotificationsContext();
+  const navigate = useNavigate();
+  const { invites, removeInvite, refreshInvitations } = useNotificationsContext();
 
-  const handleAccept = (inviteId: number) => {
-    // TODO: заменить на реальный API запрос
-    console.log("Приглашение принято:", inviteId);
-    removeInvite(inviteId);
-    // TODO: перенаправить на страницу команды или обновить список команд
+  const handleAccept = async (inviteId: number) => {
+    try {
+      await teamsApi.respondToInvitation(inviteId, "accept");
+      removeInvite(inviteId);
+      await refreshInvitations();
+      
+      // Отправляем событие для обновления списка команд
+      window.dispatchEvent(new CustomEvent("teamsUpdated"));
+      
+      // Можно перенаправить на страницу команды, если нужно
+      // navigate(`/teams/${teamId}`);
+    } catch (error) {
+      console.error("Failed to accept invitation", error);
+      alert("Не удалось принять приглашение");
+    }
   };
 
-  const handleDecline = (inviteId: number) => {
-    // TODO: заменить на реальный API запрос
-    console.log("Приглашение отклонено:", inviteId);
-    removeInvite(inviteId);
+  const handleDecline = async (inviteId: number) => {
+    try {
+      await teamsApi.respondToInvitation(inviteId, "decline");
+      removeInvite(inviteId);
+      await refreshInvitations();
+    } catch (error) {
+      console.error("Failed to decline invitation", error);
+      alert("Не удалось отклонить приглашение");
+    }
   };
 
   return (

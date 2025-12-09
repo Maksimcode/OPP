@@ -3,9 +3,8 @@ import { FormEvent, useEffect, useState } from "react";
 export interface StageTaskFormValues {
   name: string;
   responsibles: string[];
-  deadline: string;
+  duration: number; // Количество дней
   feedback?: string;
-  creationDate: string;
 }
 
 interface StageTaskModalProps {
@@ -28,9 +27,8 @@ export const StageTaskModal = ({
   const [name, setName] = useState("");
   const [responsibles, setResponsibles] = useState<string[]>([]);
   const [selectorOpen, setSelectorOpen] = useState(false);
-  const [deadline, setDeadline] = useState("");
+  const [duration, setDuration] = useState<number>(1);
   const [feedback, setFeedback] = useState("");
-  const [creationDate, setCreationDate] = useState<string>(new Date().toISOString());
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -38,23 +36,19 @@ export const StageTaskModal = ({
     if (initialValues && isOpen) {
       setName(initialValues.name);
       setResponsibles(initialValues.responsibles ?? []);
-      setDeadline(initialValues.deadline);
+      setDuration(initialValues.duration ?? 1);
       setFeedback(initialValues.feedback ?? "");
-      setCreationDate(initialValues.creationDate);
     } else if (isOpen) {
       setName("");
       setResponsibles([]);
-      setDeadline("");
+      setDuration(1);
       setFeedback("");
-      setCreationDate(new Date().toISOString());
     }
     setError(null);
     setSelectorOpen(false);
   }, [initialValues, isOpen]);
 
   if (!isOpen) return null;
-
-  const getMinDateTime = () => new Date().toISOString().slice(0, 16);
 
   const handleResponsibleToggle = (member: string) => {
     setResponsibles((current) =>
@@ -68,17 +62,12 @@ export const StageTaskModal = ({
       setError(`Название ${entityLabel} обязательно`);
       return;
     }
-    if (!deadline) {
-      setError("Дедлайн обязателен");
-      return;
-    }
     if (!responsibles.length) {
       setError("Нужно выбрать хотя бы одного ответственного");
       return;
     }
-    const selectedDate = new Date(deadline);
-    if (selectedDate < new Date()) {
-      setError("Дедлайн не может быть в прошлом");
+    if (!duration || duration < 1) {
+      setError("Длительность должна быть минимум 1 день");
       return;
     }
 
@@ -86,9 +75,8 @@ export const StageTaskModal = ({
     onSubmit({
       name: name.trim(),
       responsibles,
-      deadline,
-      feedback: feedback.trim() || undefined,
-      creationDate
+      duration: Math.floor(duration),
+      feedback: feedback.trim() || undefined
     });
     setLoading(false);
     onClose();
@@ -228,13 +216,13 @@ export const StageTaskModal = ({
 
           <label style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1.25rem" }}>
             <span style={{ fontSize: "0.95rem", color: "#475569", fontWeight: 500 }}>
-              Дедлайн <span style={{ color: "#dc2626" }}>*</span>
+              Длительность (количество дней) <span style={{ color: "#dc2626" }}>*</span>
             </span>
             <input
-              type="datetime-local"
-              value={deadline}
-              onChange={(e) => setDeadline(e.target.value)}
-              min={getMinDateTime()}
+              type="number"
+              value={duration}
+              onChange={(e) => setDuration(parseInt(e.target.value, 10) || 1)}
+              min={1}
               required
               style={{
                 padding: "0.75rem 1rem",

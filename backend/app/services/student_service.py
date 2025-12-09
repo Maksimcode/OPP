@@ -1,3 +1,6 @@
+from typing import List, Optional
+
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash, verify_password
@@ -30,3 +33,23 @@ class StudentService:
         if not verify_password(password, student.hashed_password):
             return None
         return student
+
+    @staticmethod
+    def search_students(db: Session, query: str, limit: int = 10) -> List[Student]:
+        """Поиск пользователей по имени или email"""
+        search_term = f"%{query.lower()}%"
+        return (
+            db.query(Student)
+            .filter(
+                or_(
+                    Student.email.ilike(search_term),
+                    Student.full_name.ilike(search_term)
+                )
+            )
+            .limit(limit)
+            .all()
+        )
+
+    @staticmethod
+    def get_by_id(db: Session, student_id: int) -> Optional[Student]:
+        return db.query(Student).filter(Student.id == student_id).first()

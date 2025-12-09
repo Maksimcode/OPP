@@ -1,12 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { ApiProject, projectsApi } from "../api/projects";
+import { teamsApi } from "../api/teams";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { Header } from "../components/Header";
 import { InviteStudentForm } from "../components/InviteStudentForm";
 import { ProjectModal } from "../components/ProjectModal";
 import { useNotificationsContext } from "../context/NotificationsContext";
 
+// Локальный тип для совместимости с компонентами, которые ожидают camelCase
 type Project = {
   id: number;
   name: string;
@@ -15,21 +18,49 @@ type Project = {
   creationDate: string;
 };
 
-// Mock данные - заменить на реальные данные из API
-const mockProjects: Project[] = [];
-
 export const TeamPage = () => {
   const { teamId } = useParams<{ teamId: string }>();
   const navigate = useNavigate();
   const { addInvite } = useNotificationsContext();
-  const [projects, setProjects] = useState<Project[]>(mockProjects);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [teamName, setTeamName] = useState(`Команда #${teamId}`);
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [deletingProject, setDeletingProject] = useState<Project | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  // Mock данные для текущей команды - заменить на реальные данные из API
-  const teamName = `Команда #${teamId}`;
+  useEffect(() => {
+    if (teamId) {
+      loadData(Number(teamId));
+    }
+  }, [teamId]);
+
+  const loadData = async (id: number) => {
+    try {
+      const [teamData, projectsData] = await Promise.all([
+        teamsApi.getOne(id),
+        projectsApi.getAllByTeam(id)
+      ]);
+      
+      setTeamName(teamData.name);
+      
+      // Преобразуем ApiProject в локальный Project
+      const mappedProjects: Project[] = projectsData.map(p => ({
+        id: p.id,
+        name: p.name,
+        deadline: p.deadline,
+        description: p.description || "",
+        creationDate: p.created_at
+      }));
+      
+      setProjects(mappedProjects);
+    } catch (error) {
+      console.error("Failed to load team data", error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleCreateProject = () => {
     setEditingProject(null);
@@ -46,57 +77,95 @@ export const TeamPage = () => {
     setIsDeleteModalOpen(true);
   };
 
-  const handleProjectSubmit = (projectData: Project) => {
-    if (editingProject) {
-      // Обновление существующего проекта
-      setProjects(
-        projects.map((p) =>
-          p.id === editingProject.id
-            ? {
-                ...p,
-                ...projectData,
-                id: editingProject.id,
-                creationDate: projectData.creationDate ?? editingProject.creationDate
-              }
-            : p
-        )
-      );
-    } else {
-      // Создание нового проекта
-      const newProject: Project = {
-        id: Date.now(),
-        ...projectData,
-        creationDate: projectData.creationDate ?? new Date().toISOString()
-      };
-      setProjects([...projects, newProject]);
+  const handleProjectSubmit = async (projectData: Project) => {
+    if (!teamId) return;
+
+    try {
+      if (editingProject) {
+        // Обновление существующего проекта
+        const updatedProjectApi = await projectsApi.update(editingProject.id, {
+          name: projectData.name,
+          description: projectData.description,
+          deadline: projectData.deadline
+        });
+        
+        const updatedProject: Project = {
+          id: updatedProjectApi.id,
+          name: updatedProjectApi.name,
+          deadline: updatedProjectApi.deadline,
+          description: updatedProjectApi.description || "",
+          creationDate: updatedProjectApi.created_at
+        };
+        
+        setProjects(projects.map((p) => (p.id === editingProject.id ? updatedProject : p)));
+        setIsProjectModalOpen(false);
+      } else {
+        // Создание нового проекта
+        const newProjectApi = await projectsApi.create({
+          name: projectData.name,
+          description: projectData.description,
+          deadline: projectData.deadline,
+          team_id: Number(teamId)
+        });
+        
+        const newProject: Project = {
+          id: newProjectApi.id,
+          name: newProjectApi.name,
+          deadline: newProjectApi.deadline,
+          description: newProjectApi.description || "",
+          creationDate: newProjectApi.created_at
+        };
+        
+        setProjects([...projects, newProject]);
+        setIsProjectModalOpen(false);
+      }
+      setEditingProject(null);
+    } catch (error) {
+      console.error("Failed to save project", error);
+      alert("Не удалось сохранить проект");
     }
-    setEditingProject(null);
   };
 
   const handleOpenProject = (project: Project) => {
-    navigate(`/teams/${teamId}/projects/${project.id}`, { state: { project, teamName } });
+    // Передаем данные проекта в state, чтобы не загружать лишний раз (хотя там будет загрузка деталей)
+    // Важно: передаем ApiProject структуру если ProjectPage ожидает её, 
+    // но ProjectPage сейчас тоже на моках или требует адаптации.
+    // Сейчас ProjectPage адаптируем на следующем шаге.
+    navigate(`/teams/${teamId}/projects/${project.id}`, { 
+      state: { 
+        project: {
+            ...project,
+            deadline: project.deadline, 
+            creationDate: project.creationDate 
+        }, 
+        teamName 
+      } 
+    });
   };
 
-  const handleConfirmDeleteProject = () => {
-    if (deletingProject) {
+  const handleConfirmDeleteProject = async () => {
+    if (!deletingProject) return;
+    try {
+      await projectsApi.delete(deletingProject.id);
       setProjects(projects.filter((p) => p.id !== deletingProject.id));
+      setIsDeleteModalOpen(false);
+      setDeletingProject(null);
+    } catch (error) {
+      console.error("Failed to delete project", error);
+      alert("Ошибка при удалении проекта");
+      setIsDeleteModalOpen(false);
       setDeletingProject(null);
     }
   };
 
-  const handleInviteStudent = (studentName: string) => {
-    // TODO: заменить на реальный API запрос
-    // В реальности приглашение будет отправлено указанному студенту, и уведомление появится у него
-    // Для демо создаём уведомление для самого себя, как будто приглашение пришло от другого студента
-    const newInvite = {
-      id: Date.now(),
-      teamName: teamName,
-      invitedBy: studentName // Имя студента, который получил приглашение (для демо показываем, как будто он приглашает)
-    };
-    // Добавляем уведомление с небольшой задержкой для реалистичности
-    setTimeout(() => {
-      addInvite(newInvite);
-    }, 500);
+  const handleInviteStudent = async (email: string) => {
+    if (!teamId) return;
+    try {
+      await teamsApi.inviteMember(Number(teamId), email);
+    } catch (error) {
+      console.error("Failed to invite member", error);
+      throw error; // Пробросим ошибку в форму
+    }
   };
 
   const formatDeadline = (deadline: string): string => {
@@ -109,6 +178,14 @@ export const TeamPage = () => {
       minute: "2-digit"
     });
   };
+
+  if (loading) {
+    return (
+      <div style={{ paddingTop: "80px", minHeight: "100vh", display: "flex", justifyContent: "center" }}>
+        Загрузка...
+      </div>
+    );
+  }
 
   return (
     <div style={{ paddingTop: "80px", minHeight: "100vh" }}>
@@ -132,7 +209,7 @@ export const TeamPage = () => {
         </button>
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
-          <h1 style={{ fontSize: "2rem", color: "#1d4ed8" }}>Проекты команды #{teamId}</h1>
+          <h1 style={{ fontSize: "2rem", color: "#1d4ed8" }}>Проекты команды {teamName}</h1>
           <button
             type="button"
             onClick={handleCreateProject}
@@ -159,7 +236,7 @@ export const TeamPage = () => {
           </button>
         </div>
 
-        <InviteStudentForm onInvite={handleInviteStudent} />
+        <InviteStudentForm teamId={Number(teamId)} onInvite={handleInviteStudent} />
 
         {projects.length === 0 ? (
           <div
@@ -232,7 +309,10 @@ export const TeamPage = () => {
                     📊 Диаграмма
                   </button>
                   <button
-                    onClick={() => handleEditProject(project)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleEditProject(project);
+                    }}
                     style={{
                       padding: "0.5rem 1rem",
                       borderRadius: "10px",
@@ -241,13 +321,23 @@ export const TeamPage = () => {
                       color: "#3b82f6",
                       fontSize: "0.9rem",
                       fontWeight: 600,
-                      cursor: "pointer"
+                      cursor: "pointer",
+                      transition: "transform 0.15s ease"
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = "translateY(-1px)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = "translateY(0)";
                     }}
                   >
                     ✏️ Изменить
                   </button>
                   <button
-                    onClick={() => handleDeleteProject(project)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteProject(project);
+                    }}
                     style={{
                       padding: "0.5rem 1rem",
                       borderRadius: "10px",
@@ -256,7 +346,14 @@ export const TeamPage = () => {
                       color: "#ef4444",
                       fontSize: "0.9rem",
                       fontWeight: 600,
-                      cursor: "pointer"
+                      cursor: "pointer",
+                      transition: "transform 0.15s ease"
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = "translateY(-1px)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = "translateY(0)";
                     }}
                   >
                     🗑️ Удалить
@@ -293,4 +390,3 @@ export const TeamPage = () => {
     </div>
   );
 };
-
