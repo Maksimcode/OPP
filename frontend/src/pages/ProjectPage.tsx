@@ -1,10 +1,10 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
+import { CreateStagePayload, projectsApi } from "../api/projects";
+import { teamsApi } from "../api/teams";
 import { Header } from "../components/Header";
 import { StageTaskFormValues, StageTaskModal } from "../components/StageTaskModal";
-
-const mockTeamMembers = ["Алексей Смирнов", "Мария Иванова", "Сергей Ким", "Елена Соколова", "Дмитрий Петров"];
 
 interface ProjectDetails {
   id: number;
@@ -23,11 +23,12 @@ interface Task {
   id: number;
   name: string;
   responsibles: string[];
-  deadline: string;
-  creationDate: string;
+  duration: number; // Количество дней
+  startDate?: string; // Дата начала (вычисляется автоматически)
+  endDate?: string; // Дата окончания (вычисляется автоматически)
   feedback?: string;
   isCompleted: boolean;
-  dependencies?: number[]; // IDs of tasks this task depends on
+  dependencies?: number[]; // IDs of tasks/stages this task depends on
 }
 
 interface Stage extends Task {
@@ -42,19 +43,6 @@ interface ModalConfig {
   editingTaskId?: number;
   initialValues?: StageTaskFormValues;
 }
-
-
-const createFallbackProject = (projectId?: string): ProjectDetails => {
-  const now = new Date();
-  const deadline = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-  return {
-    id: projectId ? Number(projectId) : Date.now(),
-    name: "Демо-проект",
-    creationDate: now.toISOString(),
-    deadline: deadline.toISOString(),
-    description: "Это демо-проект. Вернитесь на страницу команды и откройте проект оттуда, чтобы увидеть реальные данные."
-  };
-};
 
 const getDatesBetween = (start: Date, end: Date) => {
   const dates: Date[] = [];
@@ -82,10 +70,11 @@ const renderResponsibles = (people: string[] = []) => {
   ));
 };
 
-const getBarPosition = (startISO: string, endISO: string, projectStart: Date, totalColumns: number) => {
+const getBarPosition = (startDate: Date | undefined, endDate: Date | undefined, projectStart: Date, totalColumns: number) => {
   const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
-  const startDate = new Date(startISO);
-  const endDate = new Date(endISO);
+  if (!startDate || !endDate) {
+    return { columnStart: 1, span: 1 };
+  }
   let startIndex = Math.floor((startDate.getTime() - projectStart.getTime()) / dayMs);
   let endIndex = Math.floor((endDate.getTime() - projectStart.getTime()) / dayMs);
   startIndex = clamp(startIndex, 0, totalColumns - 1);
@@ -96,192 +85,29 @@ const getBarPosition = (startISO: string, endISO: string, projectStart: Date, to
   };
 };
 
-// Dependencies Arrows Component
-interface DependenciesArrowsProps {
-  stages: Stage[];
-  dateRange: Date[];
-  creationDate: Date;
-}
-
-const DependenciesArrows = ({ stages, dateRange, creationDate }: DependenciesArrowsProps) => {
-  const arrowElements: Array<{
-    from: { column: number; row: number };
-    to: { column: number; row: number };
-    fromStage?: Stage;
-    toStage?: Stage;
-    fromTask?: Task;
-    toTask?: Task;
-    fromStageId?: number;
-    toStageId?: number;
-  }> = [];
-
-  // Calculate row offsets
-  let currentRow = 2; // Start after header (0) and project row (1)
-  
-  stages.forEach((toStage, toStageIndex) => {
-    const stageRow = currentRow;
-    currentRow++;
-    
-    // Stage dependencies
-    if (toStage.dependencies && toStage.dependencies.length > 0) {
-      toStage.dependencies.forEach((depStageId) => {
-        const fromStage = stages.find((s) => s.id === depStageId);
-        if (fromStage) {
-          const fromStageIndex = stages.findIndex((s) => s.id === depStageId);
-          let fromRow = 2; // Start after header and project
-          stages.slice(0, fromStageIndex).forEach((s) => {
-            fromRow++; // Stage row
-            fromRow += s.tasks.length; // Task rows
-          });
-          
-          const fromPos = getBarPosition(fromStage.creationDate, fromStage.deadline, creationDate, dateRange.length);
-          const toPos = getBarPosition(toStage.creationDate, toStage.deadline, creationDate, dateRange.length);
-
-          arrowElements.push({
-            from: { column: fromPos.columnStart + fromPos.span - 1, row: fromRow },
-            to: { column: toPos.columnStart, row: stageRow },
-            fromStage,
-            toStage
-          });
-        }
-      });
-    }
-    
-    // Task dependencies
-    toStage.tasks.forEach((toTask) => {
-      const taskRow = currentRow;
-      currentRow++;
-      
-      if (toTask.dependencies && toTask.dependencies.length > 0) {
-        toTask.dependencies.forEach((depId) => {
-          // Check if dependency is a stage
-          const fromStage = stages.find((s) => s.id === depId);
-          if (fromStage) {
-            let fromRow = 2;
-            stages.slice(0, stages.findIndex((s) => s.id === depId)).forEach((s) => {
-              fromRow++;
-              fromRow += s.tasks.length;
-            });
-            
-            const fromPos = getBarPosition(fromStage.creationDate, fromStage.deadline, creationDate, dateRange.length);
-            const toPos = getBarPosition(toTask.creationDate, toTask.deadline, creationDate, dateRange.length);
-            
-            arrowElements.push({
-              from: { column: fromPos.columnStart + fromPos.span - 1, row: fromRow },
-              to: { column: toPos.columnStart, row: taskRow },
-              fromStage,
-              toTask,
-              toStageId: toStage.id
-            });
-          } else {
-            // Check if dependency is a task
-            const fromTask = toStage.tasks.find((t) => t.id === depId);
-            if (fromTask) {
-              let fromRow = stageRow + 1; // Start from stage row + 1
-              toStage.tasks.slice(0, toStage.tasks.findIndex((t) => t.id === depId)).forEach(() => {
-                fromRow++;
-              });
-              
-              const fromPos = getBarPosition(fromTask.creationDate, fromTask.deadline, creationDate, dateRange.length);
-              const toPos = getBarPosition(toTask.creationDate, toTask.deadline, creationDate, dateRange.length);
-              
-              arrowElements.push({
-                from: { column: fromPos.columnStart + fromPos.span - 1, row: fromRow },
-                to: { column: toPos.columnStart, row: taskRow },
-                fromTask,
-                toTask,
-                fromStageId: toStage.id,
-                toStageId: toStage.id
-              });
-            }
-          }
-        });
-      }
-    });
-  });
-
-  if (arrowElements.length === 0) return null;
-
-  // Calculate approximate positions
-  const rowHeight = 100; // approximate row height
-  const headerOffset = 80; // header height
-  const labelWidth = 520; // label column width (320px + 200px)
-  const columnWidth = 70; // approximate column width
-
-  return (
-    <svg
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        width: "100%",
-        height: "100%",
-        pointerEvents: "none",
-        zIndex: 10
-      }}
-    >
-      <defs>
-        <marker
-          id="arrowhead"
-          markerWidth="10"
-          markerHeight="10"
-          refX="9"
-          refY="3"
-          orient="auto"
-          markerUnits="strokeWidth"
-        >
-          <path d="M0,0 L0,6 L9,3 z" fill="#1d4ed8" />
-        </marker>
-      </defs>
-      {arrowElements.map((arrow, idx) => {
-        const fromX = labelWidth + (arrow.from.column - 0.5) * columnWidth;
-        const fromY = headerOffset + arrow.from.row * rowHeight + rowHeight / 2;
-        const toX = labelWidth + (arrow.to.column - 0.5) * columnWidth;
-        const toY = headerOffset + arrow.to.row * rowHeight + rowHeight / 2;
-
-        const dx = toX - fromX;
-        const dy = toY - fromY;
-        const angle = Math.atan2(dy, dx);
-
-        // Arrow head size
-        const arrowSize = 8;
-        const arrowX = toX - arrowSize * Math.cos(angle);
-        const arrowY = toY - arrowSize * Math.sin(angle);
-
-        const arrowKey = arrow.fromStage
-          ? `arrow-stage-${arrow.fromStage.id}-to-${arrow.toStage ? `stage-${arrow.toStage.id}` : `task-${arrow.toTask?.id}`}`
-          : arrow.fromTask
-          ? `arrow-task-${arrow.fromTask.id}-to-task-${arrow.toTask?.id}`
-          : `arrow-${idx}`;
-        
-        return (
-          <line
-            key={arrowKey}
-            x1={fromX}
-            y1={fromY}
-            x2={arrowX}
-            y2={arrowY}
-            stroke="#1d4ed8"
-            strokeWidth="2"
-            markerEnd="url(#arrowhead)"
-          />
-        );
-      })}
-    </svg>
-  );
-};
-
 export const ProjectPage = () => {
   const { teamId, projectId } = useParams<{ teamId: string; projectId: string }>();
   const navigate = useNavigate();
   const location = useLocation();
   const state = location.state as LocationState | undefined;
 
-  const project = state?.project ?? createFallbackProject(projectId);
-  const teamName = state?.teamName ?? `Команда #${teamId}`;
+  const [projectDetails, setProjectDetails] = useState<ProjectDetails | null>(state?.project ?? null);
+  const [teamName, setTeamName] = useState<string>(state?.teamName ?? `Команда #${teamId}`);
+  const [teamMembers, setTeamMembers] = useState<string[]>([]);
+  const [stages, setStages] = useState<Stage[]>([]);
+  const [modalConfig, setModalConfig] = useState<ModalConfig>({ isOpen: false, entity: "stage" });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false); // Флаг, что только что сохранили
 
-  const creationDate = useMemo(() => new Date(project.creationDate), [project.creationDate]);
-  const deadlineDate = useMemo(() => new Date(project.deadline), [project.deadline]);
+  const creationDate = useMemo(() => 
+    projectDetails ? new Date(projectDetails.creationDate) : new Date(), 
+    [projectDetails]
+  );
+  const deadlineDate = useMemo(() => 
+    projectDetails ? new Date(projectDetails.deadline) : new Date(), 
+    [projectDetails]
+  );
 
   const dateRange = useMemo(() => {
     if (deadlineDate < creationDate) {
@@ -293,32 +119,516 @@ export const ProjectPage = () => {
   const durationDays = Math.max(1, dateRange.length);
   const gridTemplate = `320px 200px repeat(${dateRange.length}, minmax(70px, 1fr))`;
 
-  const [stages, setStages] = useState<Stage[]>([]);
-  const [modalConfig, setModalConfig] = useState<ModalConfig>({ isOpen: false, entity: "stage" });
-
-  useEffect(() => {
-    const key = `rg-project-${project.id}-stages`;
-    try {
-      const stored = localStorage.getItem(key);
-      if (stored) {
-        const parsed = JSON.parse(stored) as Stage[];
-        if (Array.isArray(parsed)) {
-          setStages(parsed);
+  // Функция для переупорядочивания этапов: зависимые этапы должны быть ниже
+  // Если этап A зависит от этапа B, то этап B будет выше (раньше) в списке
+  // Сохраняет стабильный порядок для этапов без зависимостей или с одинаковыми зависимостями
+  const reorderStagesByDependencies = (stagesList: Stage[], explicitOrder?: Map<number, number>): Stage[] => {
+    if (stagesList.length === 0) return stagesList;
+    
+    // Используем явно переданный порядок или создаем из текущего массива
+    const originalOrder = explicitOrder || new Map<number, number>();
+    if (!explicitOrder) {
+      stagesList.forEach((stage, index) => {
+        originalOrder.set(stage.id, index);
+      });
+    }
+    
+    const reordered: Stage[] = [];
+    const added = new Set<number>();
+    const processing = new Set<number>(); // Защита от циклических зависимостей
+    
+    const addStage = (stageId: number) => {
+      if (added.has(stageId)) return; // Уже добавлен
+      if (processing.has(stageId)) {
+        // Обнаружена циклическая зависимость - пропускаем эту зависимость
+        console.warn(`Circular dependency detected for stage ${stageId}`);
+        return;
+      }
+      
+      const stage = stagesList.find((s) => s.id === stageId);
+      if (!stage) return;
+      
+      processing.add(stageId); // Помечаем как обрабатываемый
+      
+      // Сначала добавляем все зависимости этого этапа (они должны быть выше)
+      if (stage.dependencies && stage.dependencies.length > 0) {
+        // Сортируем зависимости по исходному порядку для стабильности
+        const sortedDeps = [...stage.dependencies]
+          .filter(depId => depId !== stageId) // Защита от самозависимости
+          .sort((a, b) => (originalOrder.get(a) || 0) - (originalOrder.get(b) || 0));
+        
+        for (const depId of sortedDeps) {
+          addStage(depId);
         }
       }
-    } catch (error) {
-      console.warn("Не удалось загрузить этапы проекта", error);
+      
+      processing.delete(stageId); // Убираем из обрабатываемых
+      
+      // Затем добавляем сам этап (он будет ниже зависимостей)
+      reordered.push(stage);
+      added.add(stageId);
+    };
+    
+    // Начинаем с этапов без зависимостей, затем добавляем остальные
+    // Это гарантирует, что этапы без зависимостей будут вверху
+    const stagesWithoutDeps = stagesList.filter((s) => !s.dependencies || s.dependencies.length === 0);
+    // Сортируем по исходному порядку для стабильности
+    stagesWithoutDeps.sort((a, b) => (originalOrder.get(a.id) || 0) - (originalOrder.get(b.id) || 0));
+    
+    const stagesWithDeps = stagesList.filter((s) => s.dependencies && s.dependencies.length > 0);
+    // Сортируем по исходному порядку для стабильности
+    stagesWithDeps.sort((a, b) => (originalOrder.get(a.id) || 0) - (originalOrder.get(b.id) || 0));
+    
+    // Сначала обрабатываем этапы без зависимостей
+    for (const stage of stagesWithoutDeps) {
+      if (!added.has(stage.id)) {
+        addStage(stage.id);
+      }
     }
-  }, [project.id]);
+    
+    // Затем обрабатываем этапы с зависимостями
+    for (const stage of stagesWithDeps) {
+      if (!added.has(stage.id)) {
+        addStage(stage.id);
+      }
+    }
+    
+    // На случай, если какие-то этапы не были обработаны (не должны быть, но на всякий случай)
+    const remaining = stagesList.filter(s => !added.has(s.id));
+    remaining.sort((a, b) => (originalOrder.get(a.id) || 0) - (originalOrder.get(b.id) || 0));
+    for (const stage of remaining) {
+      addStage(stage.id);
+    }
+    
+    return reordered;
+  };
+
+  // Функция для переупорядочивания задач внутри этапа
+  // Сохраняет стабильный порядок для задач без зависимостей или с одинаковыми зависимостями
+  const reorderTasksByDependencies = (tasks: Task[], explicitOrder?: Map<number, number>): Task[] => {
+    if (tasks.length === 0) return tasks;
+    
+    // Используем явно переданный порядок или создаем из текущего массива
+    const originalOrder = explicitOrder || new Map<number, number>();
+    if (!explicitOrder) {
+      tasks.forEach((task, index) => {
+        originalOrder.set(task.id, index);
+      });
+    }
+    
+    const reordered: Task[] = [];
+    const added = new Set<number>();
+    const processing = new Set<number>(); // Защита от циклических зависимостей
+    
+    // Вспомогательная функция для сравнения зависимостей
+    const getDependencyKey = (task: Task): string => {
+      if (!task.dependencies || task.dependencies.length === 0) {
+        return ''; // Задачи без зависимостей
+      }
+      // Сортируем зависимости для стабильности
+      return [...task.dependencies].sort((a, b) => a - b).join(',');
+    };
+    
+    // Группируем задачи по их зависимостям для стабильного порядка
+    const tasksByDeps = new Map<string, Task[]>();
+    tasks.forEach(task => {
+      const key = getDependencyKey(task);
+      if (!tasksByDeps.has(key)) {
+        tasksByDeps.set(key, []);
+      }
+      tasksByDeps.get(key)!.push(task);
+    });
+    
+    // Сортируем задачи в каждой группе по исходному порядку
+    tasksByDeps.forEach(group => {
+      group.sort((a, b) => (originalOrder.get(a.id) || 0) - (originalOrder.get(b.id) || 0));
+    });
+    
+    const addTask = (taskId: number) => {
+      if (added.has(taskId)) return; // Уже добавлена
+      if (processing.has(taskId)) {
+        // Обнаружена циклическая зависимость - пропускаем эту зависимость
+        console.warn(`Circular dependency detected for task ${taskId}`);
+        return;
+      }
+      
+      const task = tasks.find((t) => t.id === taskId);
+      if (!task) return;
+      
+      processing.add(taskId); // Помечаем как обрабатываемую
+      
+      // Сначала добавляем все зависимости этой задачи
+      // Зависимости могут быть как задачами, так и этапами
+      if (task.dependencies && task.dependencies.length > 0) {
+        // Получаем задачи-зависимости в стабильном порядке
+        const taskDeps = task.dependencies
+          .map(depId => tasks.find((t) => t.id === depId))
+          .filter((t): t is Task => t !== undefined)
+          .sort((a, b) => (originalOrder.get(a.id) || 0) - (originalOrder.get(b.id) || 0));
+        
+        for (const depTask of taskDeps) {
+          if (depTask.id !== taskId) { // Защита от самозависимости
+            addTask(depTask.id);
+          }
+        }
+        // Если это этап (depId не найден в tasks), пропускаем - этапы обрабатываются отдельно
+      }
+      
+      processing.delete(taskId); // Убираем из обрабатываемых
+      
+      // Затем добавляем саму задачу
+      reordered.push(task);
+      added.add(taskId);
+    };
+    
+    // Добавляем все задачи в правильном порядке, сохраняя исходный порядок для задач без зависимостей
+    // Сначала обрабатываем задачи без зависимостей в исходном порядке
+    const tasksWithoutDeps = tasks.filter(t => !t.dependencies || t.dependencies.length === 0);
+    tasksWithoutDeps.sort((a, b) => (originalOrder.get(a.id) || 0) - (originalOrder.get(b.id) || 0));
+    for (const task of tasksWithoutDeps) {
+      if (!added.has(task.id)) {
+        addTask(task.id);
+      }
+    }
+    
+    // Затем обрабатываем задачи с зависимостями в исходном порядке
+    const tasksWithDeps = tasks.filter(t => t.dependencies && t.dependencies.length > 0);
+    tasksWithDeps.sort((a, b) => (originalOrder.get(a.id) || 0) - (originalOrder.get(b.id) || 0));
+    for (const task of tasksWithDeps) {
+      if (!added.has(task.id)) {
+        addTask(task.id);
+      }
+    }
+    
+    return reordered;
+  };
+
+  // Функция для пересчета дат на основе зависимостей (реверсивная диаграмма Ганта)
+  const recalculateDates = useCallback((stagesList: Stage[]): Stage[] => {
+    const updatedStages = stagesList.map((stage) => ({
+      ...stage,
+      tasks: stage.tasks.map((task) => ({ ...task }))
+    }));
+    
+    const projectDeadline = new Date(deadlineDate);
+    projectDeadline.setHours(23, 59, 59, 999);
+    
+    const processed = new Set<number>();
+    const processingStages = new Set<number>(); // Защита от циклических зависимостей для этапов
+    
+    const getStartDate = (entity: Stage | Task): Date => 
+      entity.startDate ? new Date(entity.startDate) : new Date(creationDate);
+    
+    const getEndDate = (entity: Stage | Task): Date => 
+      entity.endDate ? new Date(entity.endDate) : new Date(creationDate);
+    
+    const processStage = (stage: Stage): void => {
+      if (processed.has(stage.id)) return;
+      if (processingStages.has(stage.id)) {
+        // Обнаружена циклическая зависимость
+        console.warn(`Circular dependency detected for stage ${stage.id} in recalculateDates`);
+        return;
+      }
+      
+      processingStages.add(stage.id);
+      
+      let minDependentStartDate: Date | null = null;
+      
+      // Ищем все этапы, которые зависят от этого этапа
+      for (const otherStage of updatedStages) {
+        if (otherStage.id !== stage.id && otherStage.dependencies?.includes(stage.id)) {
+          processStage(otherStage);
+          const dependentStart = getStartDate(otherStage);
+          if (!minDependentStartDate || dependentStart < minDependentStartDate) {
+            minDependentStartDate = new Date(dependentStart);
+          }
+        }
+      }
+      
+      let stageEndDate: Date;
+      if (minDependentStartDate) {
+        stageEndDate = new Date(minDependentStartDate);
+        stageEndDate.setDate(stageEndDate.getDate() - 1);
+        stageEndDate.setHours(23, 59, 59, 999);
+      } else {
+        stageEndDate = new Date(projectDeadline);
+      }
+      
+      const stageStartDate = new Date(stageEndDate);
+      stageStartDate.setDate(stageStartDate.getDate() - stage.duration + 1);
+      stageStartDate.setHours(0, 0, 0, 0);
+      
+      stage.startDate = stageStartDate.toISOString();
+      stage.endDate = stageEndDate.toISOString();
+      
+      processingStages.delete(stage.id);
+      
+      const taskProcessed = new Set<number>();
+      const processingTasks = new Set<number>(); // Защита от циклических зависимостей для задач
+      
+      const processTask = (task: Task) => {
+        if (taskProcessed.has(task.id)) return;
+        if (processingTasks.has(task.id)) {
+          // Обнаружена циклическая зависимость
+          console.warn(`Circular dependency detected for task ${task.id} in recalculateDates`);
+          return;
+        }
+        
+        processingTasks.add(task.id);
+        
+        let minDependentTaskStart: Date | null = null;
+        
+        for (const otherTask of stage.tasks) {
+          if (otherTask.id !== task.id && otherTask.dependencies?.includes(task.id)) {
+            processTask(otherTask);
+            const dependentStart = getStartDate(otherTask);
+            if (!minDependentTaskStart || dependentStart < minDependentTaskStart) {
+              minDependentTaskStart = new Date(dependentStart);
+            }
+          }
+        }
+        
+        if (task.dependencies) {
+          for (const depId of task.dependencies) {
+            if (depId !== task.id) {
+              const depStage = updatedStages.find((s) => s.id === depId);
+              if (depStage) {
+                processStage(depStage);
+                const depEnd = getEndDate(depStage);
+                if (!minDependentTaskStart || depEnd < minDependentTaskStart) {
+                  minDependentTaskStart = new Date(depEnd);
+                  minDependentTaskStart.setDate(minDependentTaskStart.getDate() + 1);
+                }
+              }
+            }
+          }
+        }
+        
+        let taskEndDate: Date;
+        if (minDependentTaskStart) {
+          taskEndDate = new Date(minDependentTaskStart);
+          taskEndDate.setDate(taskEndDate.getDate() - 1);
+          taskEndDate.setHours(23, 59, 59, 999);
+        } else {
+          taskEndDate = new Date(stageEndDate);
+        }
+        
+        const taskStartDate = new Date(taskEndDate);
+        taskStartDate.setDate(taskStartDate.getDate() - task.duration + 1);
+        taskStartDate.setHours(0, 0, 0, 0);
+        
+        task.startDate = taskStartDate.toISOString();
+        task.endDate = taskEndDate.toISOString();
+        
+        processingTasks.delete(task.id);
+        taskProcessed.add(task.id);
+      };
+      
+      for (const task of stage.tasks) {
+        processTask(task);
+      }
+      
+      processed.add(stage.id);
+    };
+    
+    const stagesWithoutDeps = updatedStages.filter(
+      (s) => !s.dependencies || s.dependencies.length === 0
+    );
+    
+    for (const stage of stagesWithoutDeps) {
+      processStage(stage);
+    }
+    
+    for (const stage of updatedStages) {
+      if (!processed.has(stage.id)) {
+        processStage(stage);
+      }
+    }
+    
+    return updatedStages;
+  }, [creationDate, deadlineDate]);
 
   useEffect(() => {
-    const key = `rg-project-${project.id}-stages`;
+    const loadAllData = async () => {
+      if (!projectId || !teamId) return;
+      try {
+        setLoading(true);
+        
+        // Загружаем данные проекта (включая этапы)
+        const apiProject = await projectsApi.getOne(Number(projectId));
+        setProjectDetails({
+            id: apiProject.id,
+            name: apiProject.name,
+            deadline: apiProject.deadline,
+            creationDate: apiProject.created_at,
+            description: apiProject.description
+        });
+
+        // Маппинг этапов и задач
+        if (apiProject.stages) {
+            // Логирование для отладки
+            console.log("Loaded stages from API:", JSON.stringify(apiProject.stages, null, 2));
+            
+            const mappedStages: Stage[] = apiProject.stages.map(s => ({
+                id: s.id,
+                name: s.name,
+                duration: s.duration,
+                isCompleted: s.is_completed,
+                responsibles: s.responsibles || [],
+                feedback: s.feedback,
+                dependencies: Array.isArray(s.dependencies) ? s.dependencies : (s.dependencies ? [s.dependencies] : []), // Гарантируем, что это массив
+                tasks: s.tasks.map(t => ({
+                    id: t.id,
+                    name: t.name,
+                    duration: t.duration,
+                    isCompleted: t.is_completed,
+                    responsibles: t.responsibles || [],
+                    feedback: t.feedback,
+                    dependencies: Array.isArray(t.dependencies) ? t.dependencies : (t.dependencies ? [t.dependencies] : []) // Гарантируем, что это массив
+                }))
+            }));
+            
+            // НЕ применяем переупорядочивание при загрузке - порядок уже правильный с бэкенда
+            // Пересчитываем даты после загрузки
+            const withDates = recalculateDates(mappedStages);
+            setStages(withDates);
+        }
+
+        // Загружаем участников команды
+        const teamData = await teamsApi.getOne(Number(teamId));
+        setTeamName(teamData.name);
+        if (teamData.members) {
+            setTeamMembers(teamData.members.map(m => m.full_name));
+        }
+
+      } catch (error) {
+        console.error("Failed to load project data", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadAllData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, teamId]); // recalculateDates removed from deps to avoid loop
+
+  // Эффект для пересчета дат при изменении метаданных проекта или списка этапов
+  // НЕ срабатывает после сохранения, чтобы не ломать порядок
+  useEffect(() => {
+      // Если только что сохранили, не делаем ничего - порядок уже правильный
+      if (justSaved) {
+        return;
+      }
+      
+      if (stages.length > 0 && projectDetails && loading === false) {
+          // Пересчитываем даты только если у нас есть этапы и информация о проекте
+          // И только при первой загрузке (когда loading становится false)
+          // Проверяем, нужно ли пересчитывать - если у этапов нет startDate/endDate или они устарели
+          const needsRecalculation = stages.some(stage => 
+            !stage.startDate || !stage.endDate || 
+            stage.tasks.some(task => !task.startDate || !task.endDate)
+          );
+          
+          if (needsRecalculation) {
+            setStages(prev => recalculateDates(prev));
+          }
+      }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deadlineDate, creationDate, projectDetails, loading, justSaved]); // When dates, project details, loading state, or justSaved changes
+
+  const handleSaveProject = async () => {
+    if (!projectId) return;
     try {
-      localStorage.setItem(key, JSON.stringify(stages));
-    } catch (error) {
-      console.warn("Не удалось сохранить этапы проекта", error);
+      setSaving(true);
+      
+      // Сохраняем текущий порядок для сравнения
+      const orderBeforeSave = stages.map((s, si) => ({
+        stageIndex: si,
+        stageId: s.id,
+        stageName: s.name,
+        tasks: s.tasks.map((t, ti) => ({ taskIndex: ti, taskId: t.id, taskName: t.name }))
+      }));
+      console.log("Order BEFORE save:", orderBeforeSave);
+      
+      // Map local stages to API payload
+      // Создаем маппинг ID -> позиция для этапов и задач
+      const stageIdToIndex = new Map<number, number>();
+      stages.forEach((stage, index) => {
+        stageIdToIndex.set(stage.id, index);
+      });
+      
+      const taskIdToIndex = new Map<number, { stageIndex: number; taskIndex: number }>();
+      stages.forEach((stage, stageIndex) => {
+        stage.tasks.forEach((task, taskIndex) => {
+          taskIdToIndex.set(task.id, { stageIndex, taskIndex });
+        });
+      });
+      
+      const payload: CreateStagePayload[] = stages.map((s, stageIndex) => ({
+        name: s.name,
+        duration: s.duration,
+        is_completed: s.isCompleted,
+        responsibles: s.responsibles || [],
+        feedback: s.feedback,
+        // Преобразуем зависимости этапов: ID -> позиция в массиве (для маппинга на бэкенде)
+        dependencies: (s.dependencies || []).map(depId => stageIdToIndex.get(depId) ?? -1).filter(idx => idx !== -1),
+        tasks: s.tasks.map((t, taskIndex) => ({
+            name: t.name,
+            duration: t.duration,
+            is_completed: t.isCompleted,
+            responsibles: t.responsibles || [],
+            feedback: t.feedback,
+            // Преобразуем зависимости задач: ID -> позиция
+            // Используем формулу: stage_index * 10000 + task_index для задач
+            // Используем отрицательные числа для этапов: -(stage_index + 1)
+            dependencies: (t.dependencies || []).map(depId => {
+              // Сначала проверяем, является ли это задачей
+              const taskInfo = taskIdToIndex.get(depId);
+              if (taskInfo) {
+                // Это задача - используем формулу stage_index * 10000 + task_index
+                return taskInfo.stageIndex * 10000 + taskInfo.taskIndex;
+              }
+              // Проверяем, является ли это этапом
+              const stageDepIndex = stageIdToIndex.get(depId);
+              if (stageDepIndex !== undefined) {
+                // Это этап - используем отрицательное число
+                return -(stageDepIndex + 1);
+              }
+              return -999999; // Не найдено
+            }).filter(idx => idx !== -999999)
+        }))
+      }));
+      
+      await projectsApi.updateStages(Number(projectId), payload);
+      
+      // После успешного сохранения НЕ меняем состояние вообще - ничего не делаем
+      // Текущий порядок и все данные остаются как есть
+      // Даты уже пересчитаны в текущем состоянии, поэтому ничего делать не нужно
+      
+      // Устанавливаем флаг, что только что сохранили, чтобы useEffect не сработал
+      setJustSaved(true);
+      
+      // Через небольшую задержку сбрасываем флаг (чтобы useEffect мог сработать при других изменениях)
+      setTimeout(() => {
+        setJustSaved(false);
+      }, 2000);
+      
+      alert("Проект успешно сохранен!");
+      
+    } catch (error: any) {
+      console.error("Failed to save project", error);
+      console.error("Error details:", {
+        message: error?.message,
+        response: error?.response?.data,
+        status: error?.response?.status,
+        stack: error?.stack
+      });
+      const errorMessage = error?.response?.data?.detail || error?.message || "Неизвестная ошибка";
+      alert(`Ошибка при сохранении: ${errorMessage}`);
+    } finally {
+      setSaving(false);
     }
-  }, [project.id, stages]);
+  };
 
   const openStageModal = (stage?: Stage) => {
     setModalConfig({
@@ -328,10 +638,9 @@ export const ProjectPage = () => {
       initialValues: stage
         ? {
             name: stage.name,
-          responsibles: stage.responsibles,
-            deadline: stage.deadline,
-            feedback: stage.feedback,
-            creationDate: stage.creationDate
+            responsibles: stage.responsibles,
+            duration: stage.duration,
+            feedback: stage.feedback
           }
         : undefined
     });
@@ -346,10 +655,9 @@ export const ProjectPage = () => {
       initialValues: task
         ? {
             name: task.name,
-          responsibles: task.responsibles,
-            deadline: task.deadline,
-            feedback: task.feedback,
-            creationDate: task.creationDate
+            responsibles: task.responsibles,
+            duration: task.duration,
+            feedback: task.feedback
           }
         : undefined
     });
@@ -362,30 +670,31 @@ export const ProjectPage = () => {
   const handleStageTaskSubmit = (values: StageTaskFormValues) => {
     if (modalConfig.entity === "stage") {
       if (modalConfig.editingStageId) {
-        setStages((prev) =>
-          prev.map((stage) =>
+        setStages((prev) => {
+          const updated = prev.map((stage) =>
             stage.id === modalConfig.editingStageId
               ? {
                   ...stage,
                   name: values.name,
-                responsibles: values.responsibles,
-                  deadline: values.deadline,
+                  responsibles: values.responsibles,
+                  duration: values.duration,
                   feedback: values.feedback,
-                  creationDate: values.creationDate
+                  dependencies: stage.dependencies || [] // Сохраняем зависимости при редактировании
                 }
               : stage
-          )
-        );
+          );
+          return recalculateDates(updated);
+        });
       } else {
         const newStage: Stage = {
-          id: Date.now(),
+          id: Date.now(), // Временный ID
           name: values.name,
-        responsibles: values.responsibles,
-          deadline: values.deadline,
-          creationDate: values.creationDate,
+          responsibles: values.responsibles,
+          duration: values.duration,
           feedback: values.feedback,
           isCompleted: false,
-          tasks: []
+          tasks: [],
+          dependencies: [] // Инициализируем пустым массивом
         };
         setStages((prev) => {
           const updated = [...prev, newStage];
@@ -407,29 +716,28 @@ export const ProjectPage = () => {
                       ...task,
                       name: values.name,
                       responsibles: values.responsibles,
-                      deadline: values.deadline,
+                      duration: values.duration,
                       feedback: values.feedback,
-                      creationDate: values.creationDate
+                      dependencies: task.dependencies || [] // Сохраняем зависимости при редактировании
                     }
                   : task
               )
             };
           }
           const newTask: Task = {
-            id: Date.now(),
+            id: Date.now(), // Временный ID
             name: values.name,
-          responsibles: values.responsibles,
-            deadline: values.deadline,
-            creationDate: values.creationDate,
+            responsibles: values.responsibles,
+            duration: values.duration,
             feedback: values.feedback,
-            isCompleted: false
+            isCompleted: false,
+            dependencies: [] // Инициализируем пустым массивом
           };
           return {
             ...stage,
             tasks: [...stage.tasks, newTask]
           };
         });
-        // Пересчитываем даты, если есть зависимости
         return recalculateDates(updated);
       });
     }
@@ -487,131 +795,124 @@ export const ProjectPage = () => {
     );
   };
 
-  // Функция для пересчета дат на основе зависимостей (реверсивная диаграмма Ганта)
-  // Если этап A зависит от этапа B, то этап B должен закончиться ДО начала этапа A
-  const recalculateDates = (stagesList: Stage[]): Stage[] => {
-    const updatedStages = stagesList.map((stage) => ({
-      ...stage,
-      tasks: stage.tasks.map((task) => ({ ...task }))
-    }));
-    
-    const processed = new Set<number>();
-    
-    // Функция для получения даты окончания
-    const getEndDate = (entity: Stage | Task): Date => new Date(entity.deadline);
-    const getStartDate = (entity: Stage | Task): Date => new Date(entity.creationDate);
-    
-    // Функция для установки дат этапа на основе его зависимостей
-    const processStage = (stage: Stage): void => {
-      if (processed.has(stage.id)) return;
-      
-      let maxDependencyEndDate: Date | null = null;
-      
-      // Сначала обрабатываем все зависимости
-      if (stage.dependencies && stage.dependencies.length > 0) {
-        for (const depStageId of stage.dependencies) {
-          const depStage = updatedStages.find((s) => s.id === depStageId);
-          if (depStage) {
-            processStage(depStage); // Рекурсивно обрабатываем зависимости
-            const depEnd = getEndDate(depStage);
-            if (!maxDependencyEndDate || depEnd > maxDependencyEndDate) {
-              maxDependencyEndDate = new Date(depEnd);
-            }
-          }
-        }
-      }
-      
-      // Если есть зависимости, этап должен начинаться после их окончания
-      if (maxDependencyEndDate) {
-        const originalStart = getStartDate(stage);
-        const originalEnd = getEndDate(stage);
-        const duration = Math.max(1, Math.ceil((originalEnd.getTime() - originalStart.getTime()) / dayMs));
-        
-        // Этап начинается на следующий день после окончания последней зависимости
-        const newStartDate = new Date(maxDependencyEndDate);
-        newStartDate.setDate(newStartDate.getDate() + 1);
-        newStartDate.setHours(0, 0, 0, 0);
-        
-        stage.creationDate = newStartDate.toISOString();
-        
-        const newEndDate = new Date(newStartDate);
-        newEndDate.setDate(newEndDate.getDate() + duration - 1);
-        newEndDate.setHours(23, 59, 59, 999);
-        stage.deadline = newEndDate.toISOString();
-      }
-      
-      // Обрабатываем задачи этапа
-      for (const task of stage.tasks) {
-        let taskMaxDependencyEnd: Date | null = new Date(stage.creationDate);
-        
-        if (task.dependencies && task.dependencies.length > 0) {
-          for (const depId of task.dependencies) {
-            // Проверяем, является ли зависимость задачей того же этапа
-            const depTask = stage.tasks.find((t) => t.id === depId);
-            if (depTask) {
-              const depEnd = getEndDate(depTask);
-              if (depEnd > taskMaxDependencyEnd) {
-                taskMaxDependencyEnd = new Date(depEnd);
-              }
-            } else {
-              // Проверяем, является ли зависимость другим этапом
-              const depStage = updatedStages.find((s) => s.id === depId);
-              if (depStage) {
-                processStage(depStage);
-                const depEnd = getEndDate(depStage);
-                if (depEnd > taskMaxDependencyEnd) {
-                  taskMaxDependencyEnd = new Date(depEnd);
-                }
-              }
-            }
-          }
-          
-          // Задача должна начинаться после окончания всех её зависимостей
-          const originalTaskStart = getStartDate(task);
-          const originalTaskEnd = getEndDate(task);
-          const taskDuration = Math.max(1, Math.ceil((originalTaskEnd.getTime() - originalTaskStart.getTime()) / dayMs));
-          
-          const newTaskStart = new Date(taskMaxDependencyEnd);
-          newTaskStart.setDate(newTaskStart.getDate() + 1);
-          newTaskStart.setHours(0, 0, 0, 0);
-          task.creationDate = newTaskStart.toISOString();
-          
-          const newTaskEnd = new Date(newTaskStart);
-          newTaskEnd.setDate(newTaskEnd.getDate() + taskDuration - 1);
-          newTaskEnd.setHours(23, 59, 59, 999);
-          task.deadline = newTaskEnd.toISOString();
-        }
-      }
-      
-      processed.add(stage.id);
-    };
-    
-    // Обрабатываем все этапы
-    for (const stage of updatedStages) {
-      processStage(stage);
-    }
-    
-    return updatedStages;
-  };
-
   const updateStageDependencies = (stageId: number, dependencyIds: number[]) => {
     setStages((prev) => {
-      const updated = prev.map((stage) => (stage.id === stageId ? { ...stage, dependencies: dependencyIds } : stage));
-      return recalculateDates(updated);
+      const deps = Array.isArray(dependencyIds) ? dependencyIds : [];
+      let updated = prev.map((stage) => (stage.id === stageId ? { ...stage, dependencies: deps } : stage));
+      
+      if (deps.length > 0) {
+        const dependentStageIndex = updated.findIndex((s) => s.id === stageId);
+        const dependentStage = updated[dependentStageIndex];
+        
+        if (dependentStage && dependentStageIndex !== -1) {
+          const dependencyIndices = deps
+            .map((depId) => updated.findIndex((s) => s.id === depId))
+            .filter((idx) => idx !== -1);
+          
+          if (dependencyIndices.length > 0) {
+            const maxDepIndex = Math.max(...dependencyIndices);
+            const currentIndex = dependentStageIndex;
+            
+            if (currentIndex <= maxDepIndex) {
+              const movedStage = updated[currentIndex];
+              updated.splice(currentIndex, 1);
+              const newMaxDepIndex = Math.max(
+                ...deps
+                  .map((depId) => updated.findIndex((s) => s.id === depId))
+                  .filter((idx) => idx !== -1)
+              );
+              updated.splice(newMaxDepIndex + 1, 0, movedStage);
+            }
+          }
+        }
+      }
+      
+      let reordered = reorderStagesByDependencies(updated);
+      
+      if (deps.length > 0) {
+        const dependentStageIndex = reordered.findIndex((s) => s.id === stageId);
+        const dependencyIndices = deps
+          .map((depId) => reordered.findIndex((s) => s.id === depId))
+          .filter((idx) => idx !== -1);
+        
+        if (dependencyIndices.length > 0 && dependentStageIndex !== -1) {
+          const maxDepIndex = Math.max(...dependencyIndices);
+          if (dependentStageIndex <= maxDepIndex || dependentStageIndex > maxDepIndex + 1) {
+            const [movedStage] = reordered.splice(dependentStageIndex, 1);
+            const insertIndex = maxDepIndex < dependentStageIndex ? maxDepIndex + 1 : maxDepIndex + 1;
+            reordered.splice(insertIndex, 0, movedStage);
+          }
+        }
+      }
+      
+      const withReorderedTasks = reordered.map((stage) => ({
+        ...stage,
+        tasks: reorderTasksByDependencies(stage.tasks)
+      }));
+      
+      return recalculateDates(withReorderedTasks);
     });
   };
 
   const updateTaskDependencies = (stageId: number, taskId: number, dependencyIds: number[]) => {
     setStages((prev) => {
-      const updated = prev.map((stage) =>
-        stage.id === stageId
-          ? {
-              ...stage,
-              tasks: stage.tasks.map((task) => (task.id === taskId ? { ...task, dependencies: dependencyIds } : task))
+      const deps = Array.isArray(dependencyIds) ? dependencyIds : [];
+      const updated = prev.map((stage) => {
+        if (stage.id !== stageId) {
+          return stage;
+        }
+        
+        let updatedTasks = stage.tasks.map((task) => 
+          task.id === taskId ? { ...task, dependencies: deps } : task
+        );
+        
+        if (deps.length > 0) {
+          const dependentTaskIndex = updatedTasks.findIndex((t) => t.id === taskId);
+          const dependentTask = updatedTasks[dependentTaskIndex];
+          
+          if (dependentTask && dependentTaskIndex !== -1) {
+            const taskDependencyIndices = deps
+              .map((depId) => {
+                const depTask = updatedTasks.find((t) => t.id === depId);
+                return depTask ? updatedTasks.findIndex((t) => t.id === depId) : -1;
+              })
+              .filter((idx) => idx !== -1);
+            
+            if (taskDependencyIndices.length > 0) {
+              const maxTaskDepIndex = Math.max(...taskDependencyIndices);
+              const currentTaskIndex = dependentTaskIndex;
+              
+              if (currentTaskIndex <= maxTaskDepIndex) {
+                const movedTask = updatedTasks[currentTaskIndex];
+                updatedTasks.splice(currentTaskIndex, 1);
+                const newMaxTaskDepIndex = Math.max(
+                  ...deps
+                    .map((depId) => {
+                      const depTask = updatedTasks.find((t) => t.id === depId);
+                      return depTask ? updatedTasks.findIndex((t) => t.id === depId) : -1;
+                    })
+                    .filter((idx) => idx !== -1)
+                );
+                updatedTasks.splice(newMaxTaskDepIndex + 1, 0, movedTask);
+              }
             }
-          : stage
-      );
-      return recalculateDates(updated);
+          }
+        }
+        
+        return {
+          ...stage,
+          tasks: updatedTasks
+        };
+      });
+      
+      const reorderedStages = reorderStagesByDependencies(updated);
+      
+      const withReorderedTasks = reorderedStages.map((stage) => ({
+        ...stage,
+        tasks: reorderTasksByDependencies(stage.tasks)
+      }));
+      
+      return recalculateDates(withReorderedTasks);
     });
   };
 
@@ -648,7 +949,6 @@ export const ProjectPage = () => {
       return;
     }
 
-    // Нельзя сделать зависимость от задачи к этапу, только наоборот или одноуровневые
     if (draggedItem.type === "task" && targetType === "stage") {
       setDraggedItem(null);
       return;
@@ -668,10 +968,8 @@ export const ProjectPage = () => {
       let newDeps: number[];
       
       if (draggedItem.type === "task" && draggedItem.stageId === targetStageId) {
-        // Зависимость между задачами одного этапа
         newDeps = [...currentDeps.filter((d) => d !== draggedItem.id), draggedItem.id];
       } else if (draggedItem.type === "stage") {
-        // Зависимость от этапа - добавляем все задачи этапа
         const draggedStage = stages.find((s) => s.id === draggedItem.id);
         const stageTaskIds = draggedStage?.tasks.map((t) => t.id) || [];
         newDeps = [...currentDeps.filter((d) => !stageTaskIds.includes(d)), ...stageTaskIds];
@@ -686,7 +984,9 @@ export const ProjectPage = () => {
   };
 
   const renderStageRow = (stage: Stage) => {
-    const { columnStart, span } = getBarPosition(stage.creationDate, stage.deadline, creationDate, dateRange.length);
+    const startDate = stage.startDate ? new Date(stage.startDate) : undefined;
+    const endDate = stage.endDate ? new Date(stage.endDate) : undefined;
+    const { columnStart, span } = getBarPosition(startDate, endDate, creationDate, dateRange.length);
     const isDragging = draggedItem?.type === "stage" && draggedItem.id === stage.id;
     const isDragOver = dragOverTarget?.type === "stage" && dragOverTarget.id === stage.id;
     
@@ -790,7 +1090,7 @@ export const ProjectPage = () => {
             style={{ gridColumn: `${columnStart} / span ${span}` }}
             onClick={() => openStageModal(stage)}
           >
-            <span>{span} дн.</span>
+            <span>{stage.duration} дн.</span>
           </div>
         </div>
       </div>
@@ -798,7 +1098,9 @@ export const ProjectPage = () => {
   };
 
   const renderTaskRow = (stage: Stage, task: Task) => {
-    const { columnStart, span } = getBarPosition(task.creationDate, task.deadline, creationDate, dateRange.length);
+    const startDate = task.startDate ? new Date(task.startDate) : undefined;
+    const endDate = task.endDate ? new Date(task.endDate) : undefined;
+    const { columnStart, span } = getBarPosition(startDate, endDate, creationDate, dateRange.length);
     const isDragging = draggedItem?.type === "task" && draggedItem.id === task.id && draggedItem.stageId === stage.id;
     const isDragOver = dragOverTarget?.type === "task" && dragOverTarget.id === task.id && dragOverTarget.stageId === stage.id;
     
@@ -876,42 +1178,75 @@ export const ProjectPage = () => {
             style={{ gridColumn: `${columnStart} / span ${span}` }}
             onClick={() => openTaskModal(stage.id, task)}
           >
-            <span>{span} дн.</span>
+            <span>{task.duration} дн.</span>
           </div>
         </div>
       </div>
     );
   };
 
+  if (loading) {
+    return (
+      <div style={{ paddingTop: "80px", minHeight: "100vh", display: "flex", justifyContent: "center" }}>
+        Загрузка...
+      </div>
+    );
+  }
+
+  if (!projectDetails) {
+    return (
+        <div style={{ paddingTop: "80px", textAlign: "center" }}>Проект не найден</div>
+    )
+  }
+
   return (
     <div style={{ paddingTop: "80px", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       <Header />
       <div style={{ flex: 1, padding: "1.5rem 2rem 2rem", width: "100%" }}>
-        <button
-          onClick={() => navigate(-1)}
-          style={{
-            marginBottom: "1.5rem",
-            padding: "0.5rem 1rem",
-            borderRadius: "10px",
-            border: "1px solid rgba(148, 163, 184, 0.35)",
-            background: "white",
-            color: "#475569",
-            fontSize: "0.9rem",
-            fontWeight: 600,
-            cursor: "pointer"
-          }}
-        >
-          ← Назад
-        </button>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <button
+            onClick={() => navigate(-1)}
+            style={{
+              marginBottom: "1.5rem",
+              padding: "0.5rem 1rem",
+              borderRadius: "10px",
+              border: "1px solid rgba(148, 163, 184, 0.35)",
+              background: "white",
+              color: "#475569",
+              fontSize: "0.9rem",
+              fontWeight: 600,
+              cursor: "pointer"
+            }}
+          >
+            ← Назад
+          </button>
+          
+          <button
+            onClick={handleSaveProject}
+            disabled={saving}
+            style={{
+              padding: "0.75rem 1.5rem",
+              borderRadius: "10px",
+              border: "none",
+              background: saving ? "#94a3b8" : "linear-gradient(135deg, #10b981, #059669)",
+              color: "white",
+              fontSize: "1rem",
+              fontWeight: 600,
+              cursor: saving ? "wait" : "pointer",
+              boxShadow: "0 4px 12px rgba(16, 185, 129, 0.2)"
+            }}
+          >
+            {saving ? "Сохранение..." : "Сохранить изменения"}
+          </button>
+        </div>
 
         <div style={{ marginBottom: "1.5rem" }}>
-            <h1 style={{ fontSize: "2rem", color: "#1d4ed8", marginBottom: "0.5rem" }}>{project.name}</h1>
+            <h1 style={{ fontSize: "2rem", color: "#1d4ed8", marginBottom: "0.5rem" }}>{projectDetails.name}</h1>
             <p style={{ color: "#475569" }}>Команда: {teamName}</p>
             <p style={{ color: "#94a3b8", fontSize: "0.9rem" }}>
               Длительность проекта: {durationDays} дн. (с {creationDate.toLocaleDateString("ru-RU")} по {deadlineDate.toLocaleDateString("ru-RU")})
             </p>
         </div>
-
 
         <div className="gantt-wrapper" style={{ position: "relative" }}>
           <div className="gantt-table">
@@ -929,7 +1264,7 @@ export const ProjectPage = () => {
             <div className="gantt-row" style={{ gridTemplateColumns: gridTemplate }}>
             <div className="gantt-label-cell">
               <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
-                <span style={{ fontWeight: 600, color: "#0f172a", flex: 1, minWidth: "120px" }}>📁 {project.name}</span>
+                <span style={{ fontWeight: 600, color: "#0f172a", flex: 1, minWidth: "120px" }}>📁 {projectDetails.name}</span>
                 <button
                   title="Добавить этап"
                   onClick={() => openStageModal()}
@@ -962,53 +1297,20 @@ export const ProjectPage = () => {
               </div>
             </div>
 
-            {(() => {
-              // Топологическая сортировка этапов для правильного отображения
-              // Этапы без зависимостей идут первыми, затем этапы, которые зависят от них
-              const sortedStages: Stage[] = [];
-              const visited = new Set<number>();
-              
-              const visit = (stageId: number) => {
-                if (visited.has(stageId)) return;
-                
-                const stage = stages.find((s) => s.id === stageId);
-                if (!stage) return;
-                
-                // Сначала посещаем все зависимости
-                if (stage.dependencies) {
-                  for (const depId of stage.dependencies) {
-                    visit(depId);
-                  }
-                }
-                
-                visited.add(stageId);
-                sortedStages.push(stage);
-              };
-              
-              // Посещаем все этапы
-              for (const stage of stages) {
-                if (!visited.has(stage.id)) {
-                  visit(stage.id);
-                }
-              }
-              
-              return sortedStages.map((stage) => (
-                <Fragment key={stage.id}>
-                  {renderStageRow(stage)}
-                  {stage.tasks.map((task) => renderTaskRow(stage, task))}
-                </Fragment>
-              ));
-            })()}
+            {stages.map((stage) => (
+              <Fragment key={stage.id}>
+                {renderStageRow(stage)}
+                {stage.tasks.map((task) => renderTaskRow(stage, task))}
+              </Fragment>
+            ))}
           </div>
-          {/* Dependencies arrows overlay */}
-          {/* <DependenciesArrows stages={stages} dateRange={dateRange} creationDate={creationDate} /> */}
         </div>
       </div>
 
       <StageTaskModal
         isOpen={modalConfig.isOpen}
         entityLabel={modalConfig.entity === "stage" ? "этап" : "задачу"}
-        teamMembers={mockTeamMembers}
+        teamMembers={teamMembers}
         onClose={closeModal}
         onSubmit={handleStageTaskSubmit}
         initialValues={modalConfig.initialValues}

@@ -1,37 +1,57 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { Team, teamsApi } from "../api/teams";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { CreateTeamModal } from "../components/CreateTeamModal";
 import { EditTeamModal } from "../components/EditTeamModal";
 import { Header } from "../components/Header";
 
-type Team = {
-  id: number;
-  name: string;
-  projectCount: number;
-};
-
-// Mock данные для демонстрации - заменить на реальные данные из API
-const mockTeams: Team[] = [];
-
 export const Dashboard = () => {
   const navigate = useNavigate();
-  const [teams, setTeams] = useState<Team[]>(mockTeams);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [loading, setLoading] = useState(true);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [editingTeam, setEditingTeam] = useState<Team | null>(null);
   const [deletingTeam, setDeletingTeam] = useState<Team | null>(null);
 
-  const handleCreateTeam = (name: string) => {
-    // TODO: заменить на реальный API запрос
-    const newTeam: Team = {
-      id: Date.now(),
-      name,
-      projectCount: 0
+  const loadTeams = useCallback(async () => {
+    try {
+      setLoading(true);
+      const data = await teamsApi.getAll();
+      setTeams(data);
+    } catch (error) {
+      console.error("Failed to load teams", error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadTeams();
+    
+    // Слушаем событие обновления команд (например, после принятия приглашения)
+    const handleTeamsUpdate = () => {
+      loadTeams();
     };
-    setTeams([...teams, newTeam]);
+    
+    window.addEventListener("teamsUpdated", handleTeamsUpdate);
+    
+    return () => {
+      window.removeEventListener("teamsUpdated", handleTeamsUpdate);
+    };
+  }, [loadTeams]);
+
+  const handleCreateTeam = async (name: string) => {
+    try {
+      const newTeam = await teamsApi.create({ name });
+      setTeams([...teams, newTeam]);
+      setIsCreateModalOpen(false);
+    } catch (error) {
+      console.error("Failed to create team", error);
+    }
   };
 
   const handleEditTeam = (team: Team) => {
@@ -39,10 +59,16 @@ export const Dashboard = () => {
     setIsEditModalOpen(true);
   };
 
-  const handleUpdateTeam = (name: string) => {
-    if (editingTeam) {
-      setTeams(teams.map((t) => (t.id === editingTeam.id ? { ...t, name } : t)));
+  const handleUpdateTeam = async (name: string) => {
+    if (!editingTeam) return;
+    try {
+      const updatedTeam = await teamsApi.update(editingTeam.id, { name });
+      setTeams(teams.map((t) => (t.id === editingTeam.id ? updatedTeam : t)));
+      setIsEditModalOpen(false);
       setEditingTeam(null);
+    } catch (error) {
+      console.error("Failed to update team", error);
+      alert("Ошибка при обновлении команды");
     }
   };
 
@@ -51,9 +77,17 @@ export const Dashboard = () => {
     setIsDeleteModalOpen(true);
   };
 
-  const handleConfirmDeleteTeam = () => {
-    if (deletingTeam) {
+  const handleConfirmDeleteTeam = async () => {
+    if (!deletingTeam) return;
+    try {
+      await teamsApi.delete(deletingTeam.id);
       setTeams(teams.filter((t) => t.id !== deletingTeam.id));
+      setIsDeleteModalOpen(false);
+      setDeletingTeam(null);
+    } catch (error) {
+      console.error("Failed to delete team", error);
+      alert("Ошибка при удалении команды");
+      setIsDeleteModalOpen(false);
       setDeletingTeam(null);
     }
   };
@@ -61,6 +95,14 @@ export const Dashboard = () => {
   const handleTeamClick = (teamId: number) => {
     navigate(`/teams/${teamId}`);
   };
+
+  if (loading) {
+    return (
+      <div style={{ paddingTop: "80px", minHeight: "100vh", display: "flex", justifyContent: "center" }}>
+        Загрузка...
+      </div>
+    );
+  }
 
   return (
     <div style={{ paddingTop: "80px", minHeight: "100vh" }}>
@@ -159,7 +201,7 @@ export const Dashboard = () => {
                     }}
                   >
                     <h2 style={{ fontSize: "1.25rem", marginBottom: "0.5rem", color: "#0f172a" }}>{team.name}</h2>
-                    <p style={{ color: "#475569" }}>Проектов: {team.projectCount}</p>
+                    <p style={{ color: "#475569" }}>Проектов: {team.project_count || 0}</p>
                   </div>
                   <div style={{ display: "flex", gap: "0.5rem", marginLeft: "1rem" }}>
                     <button
@@ -175,7 +217,14 @@ export const Dashboard = () => {
                         color: "#3b82f6",
                         fontSize: "0.9rem",
                         fontWeight: 600,
-                        cursor: "pointer"
+                        cursor: "pointer",
+                        transition: "transform 0.15s ease"
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = "translateY(-1px)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = "translateY(0)";
                       }}
                     >
                       ✏️ Изменить
@@ -193,7 +242,14 @@ export const Dashboard = () => {
                         color: "#ef4444",
                         fontSize: "0.9rem",
                         fontWeight: 600,
-                        cursor: "pointer"
+                        cursor: "pointer",
+                        transition: "transform 0.15s ease"
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = "translateY(-1px)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = "translateY(0)";
                       }}
                     >
                       🗑️ Удалить
