@@ -117,7 +117,7 @@ export const ProjectPage = () => {
   }, [creationDate, deadlineDate]);
 
   const durationDays = Math.max(1, dateRange.length);
-  const gridTemplate = `320px 200px repeat(${dateRange.length}, minmax(70px, 1fr))`;
+  const gridTemplate = `320px 200px repeat(${dateRange.length}, 70px)`;
 
   // Функция для переупорядочивания этапов: зависимые этапы должны быть ниже
   // Если этап A зависит от этапа B, то этап B будет выше (раньше) в списке
@@ -1084,7 +1084,7 @@ export const ProjectPage = () => {
           </div>
         </div>
         <div className="responsible-cell">{renderResponsibles(stage.responsibles)}</div>
-        <div className="gantt-grid" style={{ gridTemplateColumns: `repeat(${dateRange.length}, minmax(70px, 1fr))` }}>
+        <div className="gantt-grid" style={{ gridTemplateColumns: `repeat(${dateRange.length}, 70px)` }}>
           <div
             className={`gantt-bar stage${stage.isCompleted ? " completed" : ""}`}
             style={{ gridColumn: `${columnStart} / span ${span}` }}
@@ -1172,7 +1172,7 @@ export const ProjectPage = () => {
           </div>
         </div>
         <div className="responsible-cell">{renderResponsibles(task.responsibles)}</div>
-        <div className="gantt-grid" style={{ gridTemplateColumns: `repeat(${dateRange.length}, minmax(70px, 1fr))` }}>
+        <div className="gantt-grid" style={{ gridTemplateColumns: `repeat(${dateRange.length}, 70px)` }}>
           <div
             className={`gantt-bar task${task.isCompleted ? " completed" : ""}`}
             style={{ gridColumn: `${columnStart} / span ${span}` }}
@@ -1290,7 +1290,7 @@ export const ProjectPage = () => {
               <div className="responsible-cell">
                 <span className="responsible-chip ghost">Вся команда</span>
             </div>
-              <div className="gantt-grid" style={{ gridTemplateColumns: `repeat(${dateRange.length}, minmax(70px, 1fr))` }}>
+              <div className="gantt-grid" style={{ gridTemplateColumns: `repeat(${dateRange.length}, 70px)` }}>
                 <div className="gantt-bar project" style={{ gridColumn: `1 / span ${dateRange.length}` }} onClick={() => openStageModal()}>
                 <span>{durationDays} дн.</span>
                 </div>
