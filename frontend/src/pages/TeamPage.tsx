@@ -9,13 +9,22 @@ import { InviteStudentForm } from "../components/InviteStudentForm";
 import { ProjectModal } from "../components/ProjectModal";
 import { useNotificationsContext } from "../context/NotificationsContext";
 
-// Локальный тип для совместимости с компонентами, которые ожидают camelCase
+// Локальный тип для списка проектов (данные из API, id/creationDate всегда есть)
 type Project = {
   id: number;
   name: string;
   deadline: string;
   description: string;
   creationDate: string;
+};
+
+// Тип формы для ProjectModal (id/creationDate могут отсутствовать)
+type ProjectForm = {
+  id?: number;
+  name: string;
+  deadline: string;
+  description: string;
+  creationDate?: string;
 };
 
 export const TeamPage = () => {
@@ -26,7 +35,7 @@ export const TeamPage = () => {
   const [teamName, setTeamName] = useState(`Команда #${teamId}`);
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [editingProject, setEditingProject] = useState<ProjectForm | null>(null);
   const [deletingProject, setDeletingProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -77,53 +86,55 @@ export const TeamPage = () => {
     setIsDeleteModalOpen(true);
   };
 
-  const handleProjectSubmit = async (projectData: Project) => {
+  const handleProjectSubmit = (projectData: ProjectForm) => {
     if (!teamId) return;
 
-    try {
-      if (editingProject) {
-        // Обновление существующего проекта
-        const updatedProjectApi = await projectsApi.update(editingProject.id, {
-          name: projectData.name,
-          description: projectData.description,
-          deadline: projectData.deadline
-        });
-        
-        const updatedProject: Project = {
-          id: updatedProjectApi.id,
-          name: updatedProjectApi.name,
-          deadline: updatedProjectApi.deadline,
-          description: updatedProjectApi.description || "",
-          creationDate: updatedProjectApi.created_at
-        };
-        
-        setProjects(projects.map((p) => (p.id === editingProject.id ? updatedProject : p)));
-        setIsProjectModalOpen(false);
-      } else {
-        // Создание нового проекта
-        const newProjectApi = await projectsApi.create({
-          name: projectData.name,
-          description: projectData.description,
-          deadline: projectData.deadline,
-          team_id: Number(teamId)
-        });
-        
-        const newProject: Project = {
-          id: newProjectApi.id,
-          name: newProjectApi.name,
-          deadline: newProjectApi.deadline,
-          description: newProjectApi.description || "",
-          creationDate: newProjectApi.created_at
-        };
-        
-        setProjects([...projects, newProject]);
-        setIsProjectModalOpen(false);
+    void (async () => {
+      try {
+        if (editingProject?.id != null) {
+          // Обновление существующего проекта
+          const updatedProjectApi = await projectsApi.update(editingProject.id, {
+            name: projectData.name,
+            description: projectData.description,
+            deadline: projectData.deadline
+          });
+
+          const updatedProject: Project = {
+            id: updatedProjectApi.id,
+            name: updatedProjectApi.name,
+            deadline: updatedProjectApi.deadline,
+            description: updatedProjectApi.description || "",
+            creationDate: updatedProjectApi.created_at
+          };
+
+          setProjects(projects.map((p) => (p.id === editingProject.id ? updatedProject : p)));
+          setIsProjectModalOpen(false);
+        } else {
+          // Создание нового проекта
+          const newProjectApi = await projectsApi.create({
+            name: projectData.name,
+            description: projectData.description,
+            deadline: projectData.deadline,
+            team_id: Number(teamId)
+          });
+
+          const newProject: Project = {
+            id: newProjectApi.id,
+            name: newProjectApi.name,
+            deadline: newProjectApi.deadline,
+            description: newProjectApi.description || "",
+            creationDate: newProjectApi.created_at
+          };
+
+          setProjects([...projects, newProject]);
+          setIsProjectModalOpen(false);
+        }
+        setEditingProject(null);
+      } catch (error) {
+        console.error("Failed to save project", error);
+        alert("Не удалось сохранить проект");
       }
-      setEditingProject(null);
-    } catch (error) {
-      console.error("Failed to save project", error);
-      alert("Не удалось сохранить проект");
-    }
+    })();
   };
 
   const handleOpenProject = (project: Project) => {
