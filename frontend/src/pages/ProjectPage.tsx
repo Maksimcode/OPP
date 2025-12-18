@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { CreateStagePayload, projectsApi } from "../api/projects";
@@ -99,6 +99,9 @@ export const ProjectPage = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false); // Флаг, что только что сохранили
+  const ganttTableRef = useRef<HTMLDivElement | null>(null);
+  const [depsSvgSize, setDepsSvgSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+  const [depsPaths, setDepsPaths] = useState<Array<{ key: string; d: string; stroke: string }>>([]);
 
   const creationDate = useMemo(() => 
     projectDetails ? new Date(projectDetails.creationDate) : new Date(), 
@@ -118,6 +121,9 @@ export const ProjectPage = () => {
 
   const durationDays = Math.max(1, dateRange.length);
   const gridTemplate = `320px 200px repeat(${dateRange.length}, 70px)`;
+
+  const isSameLocalDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 
   // Функция для переупорядочивания этапов: зависимые этапы должны быть ниже
   // Если этап A зависит от этапа B, то этап B будет выше (раньше) в списке
@@ -1088,6 +1094,8 @@ export const ProjectPage = () => {
           <div
             className={`gantt-bar stage${stage.isCompleted ? " completed" : ""}`}
             style={{ gridColumn: `${columnStart} / span ${span}` }}
+            data-gantt-type="stage"
+            data-gantt-id={stage.id}
             onClick={() => openStageModal(stage)}
           >
             <span>{stage.duration} дн.</span>
@@ -1176,6 +1184,8 @@ export const ProjectPage = () => {
           <div
             className={`gantt-bar task${task.isCompleted ? " completed" : ""}`}
             style={{ gridColumn: `${columnStart} / span ${span}` }}
+            data-gantt-type="task"
+            data-gantt-id={task.id}
             onClick={() => openTaskModal(stage.id, task)}
           >
             <span>{task.duration} дн.</span>
@@ -1184,6 +1194,132 @@ export const ProjectPage = () => {
       </div>
     );
   };
+
+  const buildRoundedFourTurnPath = (
+    from: { left: number; top: number; right: number; bottom: number },
+    to: { left: number; top: number; right: number; bottom: number }
+  ) => {
+    const startX = from.right;
+    const startY = (from.top + from.bottom) / 2;
+    // End slightly INSIDE the target bar, so the arrowhead doesn't sit on top like a "play" button.
+    const endX = to.left + 6;
+    const endY = (to.top + to.bottom) / 2;
+
+    // Route with 4 turns (as requested):
+    // 1) slightly right from the source
+    // 2) down under the source
+    // 3) left under the source
+    // 4) down to the target's mid Y
+    // 5) right into the target start
+    const r = 8; // corner radius
+    const out = 14; // initial horizontal nudge from the source
+    const gapUnderSource = 18;
+
+    const underSourceY = from.bottom + gapUnderSource;
+
+    // Keep the "left corridor" safely to the left of the target start, so last segment goes right into it.
+    const leftCorridorX = Math.min(startX + out, endX - 28);
+
+    const q = (cx: number, cy: number, x: number, y: number) => `Q ${cx} ${cy} ${x} ${y}`;
+
+    // Build with rounded corners (single quadratic at each turn)
+    return [
+      // start -> right
+      `M ${startX} ${startY}`,
+      `L ${startX + out - r} ${startY}`,
+      q(startX + out, startY, startX + out, startY + r),
+
+      // down under source
+      `L ${startX + out} ${underSourceY - r}`,
+      q(startX + out, underSourceY, startX + out - r, underSourceY),
+
+      // left under source
+      `L ${leftCorridorX + r} ${underSourceY}`,
+      q(leftCorridorX, underSourceY, leftCorridorX, underSourceY + r),
+
+      // down to target mid
+      `L ${leftCorridorX} ${endY - r}`,
+      q(leftCorridorX, endY, leftCorridorX + r, endY),
+
+      // right into target start (slightly inside)
+      `L ${endX} ${endY}`
+    ].join(" ");
+  };
+
+  const recomputeDependencyOverlay = useCallback(() => {
+    const tableEl = ganttTableRef.current;
+    if (!tableEl) return;
+
+    const tableRect = tableEl.getBoundingClientRect();
+    const width = Math.ceil(tableEl.scrollWidth);
+    const height = Math.ceil(tableEl.scrollHeight);
+    setDepsSvgSize({ width, height });
+
+    const nodes = Array.from(tableEl.querySelectorAll<HTMLElement>(".gantt-bar[data-gantt-type][data-gantt-id]"));
+    const rectByKey = new Map<string, { left: number; top: number; right: number; bottom: number }>();
+
+    for (const el of nodes) {
+      const type = el.dataset.ganttType;
+      const idStr = el.dataset.ganttId;
+      if (!type || !idStr) continue;
+      const rect = el.getBoundingClientRect();
+      rectByKey.set(`${type}:${idStr}`, {
+        left: rect.left - tableRect.left,
+        top: rect.top - tableRect.top,
+        right: rect.right - tableRect.left,
+        bottom: rect.bottom - tableRect.top
+      });
+    }
+
+    const nextPaths: Array<{ key: string; d: string; stroke: string }> = [];
+
+    for (const stage of stages) {
+      const stageKey = `stage:${stage.id}`;
+      const stageRect = rectByKey.get(stageKey);
+      if (stageRect && stage.dependencies?.length) {
+        for (const depId of stage.dependencies) {
+          const fromKey = `stage:${depId}`;
+          const fromRect = rectByKey.get(fromKey);
+          if (!fromRect) continue;
+          nextPaths.push({
+            key: `s:${depId}->${stage.id}`,
+            d: buildRoundedFourTurnPath(fromRect, stageRect),
+            stroke: "rgba(14, 165, 233, 0.75)"
+          });
+        }
+      }
+
+      for (const task of stage.tasks) {
+        const taskKey = `task:${task.id}`;
+        const taskRect = rectByKey.get(taskKey);
+        if (!taskRect || !task.dependencies?.length) continue;
+
+        for (const depId of task.dependencies) {
+          const fromTaskKey = `task:${depId}`;
+          const fromStageKey = `stage:${depId}`;
+          const fromRect = rectByKey.get(fromTaskKey) ?? rectByKey.get(fromStageKey);
+          if (!fromRect) continue;
+          nextPaths.push({
+            key: `t:${depId}->${task.id}`,
+            d: buildRoundedFourTurnPath(fromRect, taskRect),
+            stroke: "rgba(16, 185, 129, 0.75)"
+          });
+        }
+      }
+    }
+
+    setDepsPaths(nextPaths);
+  }, [stages]);
+
+  useLayoutEffect(() => {
+    recomputeDependencyOverlay();
+  }, [recomputeDependencyOverlay, dateRange.length, gridTemplate]);
+
+  useEffect(() => {
+    const onResize = () => recomputeDependencyOverlay();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [recomputeDependencyOverlay]);
 
   if (loading) {
     return (
@@ -1249,16 +1385,61 @@ export const ProjectPage = () => {
         </div>
 
         <div className="gantt-wrapper" style={{ position: "relative" }}>
-          <div className="gantt-table">
+          <div className="gantt-table" ref={ganttTableRef}>
+            {depsSvgSize.width > 0 && depsSvgSize.height > 0 && (
+              <svg
+                className="gantt-deps-overlay"
+                width={depsSvgSize.width}
+                height={depsSvgSize.height}
+                viewBox={`0 0 ${depsSvgSize.width} ${depsSvgSize.height}`}
+                preserveAspectRatio="none"
+              >
+                <defs>
+                  <marker
+                    id="ganttArrow"
+                    viewBox="0 0 10 10"
+                    refX="9"
+                    refY="5"
+                    markerWidth="8"
+                    markerHeight="8"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(30, 41, 59, 0.55)" />
+                  </marker>
+                </defs>
+
+                {depsPaths.map((p) => (
+                  <path
+                    key={p.key}
+                    d={p.d}
+                    fill="none"
+                    stroke={p.stroke}
+                    strokeWidth={2}
+                    markerEnd="url(#ganttArrow)"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                ))}
+              </svg>
+            )}
             <div className="gantt-header-row" style={{ gridTemplateColumns: gridTemplate }}>
             <div className="gantt-header-cell label">Этапы / задачи</div>
               <div className="gantt-header-cell label">Ответственные</div>
-            {dateRange.map((date) => (
-              <div key={date.toISOString()} className="gantt-header-cell">
-                <div style={{ textTransform: "capitalize" }}>{formatWeekday(date)}</div>
-                <strong>{date.getDate()}</strong>
-              </div>
-            ))}
+            {dateRange.map((date) => {
+              const today = new Date();
+              const isToday = isSameLocalDay(date, today);
+              return (
+                <div key={date.toISOString()} className={`gantt-header-cell${isToday ? " today" : ""}`}>
+                  <div className="gantt-header-weekday" style={{ textTransform: "capitalize" }}>
+                    {formatWeekday(date)}
+                  </div>
+                  <div className="gantt-header-day">
+                    <strong>{date.getDate()}</strong>
+                    {isToday && <span className="gantt-today-dot" aria-hidden="true" />}
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
             <div className="gantt-row" style={{ gridTemplateColumns: gridTemplate }}>
