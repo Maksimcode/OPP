@@ -1340,23 +1340,23 @@ export const ProjectPage = () => {
       <Header />
       <div style={{ flex: 1, padding: "1.5rem 2rem 2rem", width: "100%" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <button
-            onClick={() => navigate(-1)}
-            style={{
-              marginBottom: "1.5rem",
-              padding: "0.5rem 1rem",
-              borderRadius: "10px",
-              border: "1px solid rgba(148, 163, 184, 0.35)",
-              background: "white",
-              color: "#475569",
-              fontSize: "0.9rem",
-              fontWeight: 600,
-              cursor: "pointer"
-            }}
-          >
-            ← Назад
-          </button>
-          
+        <button
+          onClick={() => navigate(-1)}
+          style={{
+            marginBottom: "1.5rem",
+            padding: "0.5rem 1rem",
+            borderRadius: "10px",
+            border: "1px solid rgba(148, 163, 184, 0.35)",
+            background: "white",
+            color: "#475569",
+            fontSize: "0.9rem",
+            fontWeight: 600,
+            cursor: "pointer"
+          }}
+        >
+          ← Назад
+        </button>
+
           <button
             onClick={handleSaveProject}
             disabled={saving}
@@ -1434,10 +1434,10 @@ export const ProjectPage = () => {
                     {formatWeekday(date)}
                   </div>
                   <div className="gantt-header-day">
-                    <strong>{date.getDate()}</strong>
+                <strong>{date.getDate()}</strong>
                     {isToday && <span className="gantt-today-dot" aria-hidden="true" />}
                   </div>
-                </div>
+              </div>
               );
             })}
           </div>

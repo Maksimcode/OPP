@@ -11,15 +11,15 @@ import { ProjectPage } from "./pages/ProjectPage";
 function App() {
   return (
     <>
-      <Routes>
-        <Route element={<AuthLayout />}>
+    <Routes>
+      <Route element={<AuthLayout />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/teams/:teamId" element={<TeamPage />} />
         <Route path="/teams/:teamId/projects/:projectId" element={<ProjectPage />} />
-        </Route>
-        <Route path="/login" element={<LoginPage />} />
+      </Route>
+      <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
-      </Routes>
+    </Routes>
       <NotificationsContainer />
     </>
   );
