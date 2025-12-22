@@ -3,7 +3,7 @@ import axios from "axios";
 const ACCESS_TOKEN_KEY = "rg_access_token";
 
 export const httpClient = axios.create({
-  baseURL: "/api/v1",
+  baseURL: import.meta.env.VITE_API_URL || "https://maximcode-oppbackend.hf.space/api/v1",
   headers: {
     "Content-Type": "application/json"
   }

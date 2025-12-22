@@ -39,48 +39,48 @@ export const RegisterPage = () => {
           </div>
         </header>
         <section className="auth-form">
-          <h1>Регистрация</h1>
+        <h1>Регистрация</h1>
           <p className="caption">Заполните поля ниже — аккаунт активируется сразу после создания.</p>
           <form onSubmit={handleSubmit}>
-            <label>
+        <label>
               Имя студента
-              <input
-                type="text"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                required
-                placeholder="Иван Иванов"
-              />
-            </label>
-            <label>
-              Email
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoComplete="email"
+          <input
+            type="text"
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            required
+            placeholder="Иван Иванов"
+          />
+        </label>
+        <label>
+          Email
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoComplete="email"
                 placeholder="name@example.com"
-              />
-            </label>
-            <label>
-              Пароль
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                autoComplete="new-password"
-                minLength={6}
+          />
+        </label>
+        <label>
+          Пароль
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            autoComplete="new-password"
+            minLength={6}
                 placeholder="Минимум 6 символов"
-              />
-            </label>
+          />
+        </label>
             {error && <div className="alert error">{error}</div>}
             {success && <div className="alert success">Успешно! Перенаправляем на вход...</div>}
-            <button type="submit" disabled={loading}>
-              {loading ? "Создаём аккаунт..." : "Зарегистрироваться"}
-            </button>
-          </form>
+        <button type="submit" disabled={loading}>
+          {loading ? "Создаём аккаунт..." : "Зарегистрироваться"}
+        </button>
+      </form>
         </section>
         <footer className="auth-footer">
           Уже зарегистрированы? <Link to="/login">Войти</Link>

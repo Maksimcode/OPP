@@ -48,33 +48,33 @@ export const LoginPage = () => {
           <h1>Вход в аккаунт</h1>
           <p className="caption">Продолжите работу над обратной диаграммой Ганта.</p>
           <form onSubmit={handleSubmit}>
-            <label>
-              Email
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoComplete="email"
+        <label>
+          Email
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoComplete="email"
                 placeholder="name@example.com"
-              />
-            </label>
-            <label>
-              Пароль
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                autoComplete="current-password"
+          />
+        </label>
+        <label>
+          Пароль
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            autoComplete="current-password"
                 placeholder="Введите пароль"
-              />
-            </label>
+          />
+        </label>
             {error && <div className="alert error">{error}</div>}
-            <button type="submit" disabled={loading}>
-              {loading ? "Входим..." : "Войти"}
-            </button>
-          </form>
+        <button type="submit" disabled={loading}>
+          {loading ? "Входим..." : "Войти"}
+        </button>
+      </form>
         </section>
         <footer className="auth-footer">
           Нет аккаунта? <Link to="/register">Зарегистрироваться</Link>

@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import auth, projects, teams
+from app.core.config import get_settings
 from app.db.base import Base
 from app.db.session import engine
 # Import models to ensure they are registered with Base.metadata
@@ -15,10 +16,14 @@ def create_application() -> FastAPI:
     Base.metadata.create_all(bind=engine)
 
     # Configure CORS
+    settings = get_settings()
     origins = [
         "http://localhost:5173",  # React default port
         "http://127.0.0.1:5173",
     ]
+    # Add frontend URL from environment variables for production
+    if settings.frontend_url:
+        origins.append(settings.frontend_url)
 
     app.add_middleware(
         CORSMiddleware,
