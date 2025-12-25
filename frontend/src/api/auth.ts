@@ -11,6 +11,12 @@ interface TokenResponse {
   token_type: string;
 }
 
+export interface User {
+  id: number;
+  email: string;
+  full_name: string;
+}
+
 export const authApi = {
   login: async (payload: LoginPayload): Promise<TokenResponse> => {
     const { data } = await httpClient.post<TokenResponse>("/auth/login", payload);
@@ -22,5 +28,9 @@ export const authApi = {
   },
   register: async (payload: LoginPayload & { full_name: string }): Promise<void> => {
     await httpClient.post("/auth/register", payload);
+  },
+  getMe: async (): Promise<User> => {
+    const { data } = await httpClient.get<User>("/auth/me");
+    return data;
   }
 };

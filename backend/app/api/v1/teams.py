@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
 from app.models.student import Student
+from app.models.team_invitation import TeamInvitation
 from app.schemas.student import StudentRead
 from app.schemas.team import TeamCreate, TeamRead, TeamReadWithMembers, TeamUpdate
 from app.schemas.team_invitation import TeamInvitationCreate, TeamInvitationRead, TeamInvitationResponse
@@ -55,7 +56,8 @@ def read_team(
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
     # Check access (is owner OR member)
-    if team.owner_id != current_user.id and current_user not in team.members:
+    is_member = team.owner_id == current_user.id or any(m.id == current_user.id for m in team.members)
+    if not is_member:
         raise HTTPException(status_code=403, detail="Not a member of this team")
     return team
 
@@ -86,19 +88,6 @@ def delete_team(
         raise HTTPException(status_code=403, detail="You are not a member of this team")
 
 
-@router.get("/search-users", response_model=List[StudentRead])
-def search_users(
-    q: str,
-    db: Session = Depends(get_db),
-    current_user: Student = Depends(get_current_user),
-):
-    """Поиск пользователей по имени или email"""
-    if len(q) < 2:
-        return []
-    students = StudentService.search_students(db, q)
-    return students
-
-
 @router.post("/{team_id}/invitations", response_model=TeamInvitationRead, status_code=status.HTTP_201_CREATED)
 def create_invitation(
     team_id: int,
@@ -112,7 +101,8 @@ def create_invitation(
         raise HTTPException(status_code=404, detail="Team not found")
     
     # Check access (is owner OR member)
-    if team.owner_id != current_user.id and current_user not in team.members:
+    is_member = team.owner_id == current_user.id or any(m.id == current_user.id for m in team.members)
+    if not is_member:
         raise HTTPException(status_code=403, detail="Not a member of this team")
     
     # Проверяем, что приглашают не самого себя
@@ -205,7 +195,8 @@ def invite_member(
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
     # Check access (is owner OR member)
-    if team.owner_id != current_user.id and current_user not in team.members:
+    is_member = team.owner_id == current_user.id or any(m.id == current_user.id for m in team.members)
+    if not is_member:
         raise HTTPException(status_code=403, detail="Not a member of this team")
     
     student = StudentService.get_by_email(db, email)
@@ -225,5 +216,19 @@ def invite_member(
         )
     
     return {"message": "Invitation sent successfully"}
+
+
+@router.post("/{team_id}/leave", status_code=status.HTTP_200_OK)
+def leave_team(
+    team_id: int,
+    db: Session = Depends(get_db),
+    current_user: Student = Depends(get_current_user),
+):
+    """Выйти из команды"""
+    success = TeamService.remove_member(db, team_id, current_user.id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Could not leave the team or not a member")
+    
+    return {"message": "Successfully left the team"}
 
 

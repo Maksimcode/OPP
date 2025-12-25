@@ -4,10 +4,10 @@ import { useAuth } from "../hooks/useAuth";
 
 export const Header = () => {
   const navigate = useNavigate();
-  const { clearAccessToken } = useAuth();
+  const { clearTokens } = useAuth();
 
   const handleLogout = () => {
-    clearAccessToken();
+    clearTokens();
     navigate("/login");
   };
 

@@ -63,11 +63,22 @@ const renderResponsibles = (people: string[] = []) => {
     return <span className="responsible-chip ghost">—</span>;
   }
 
-  return people.map((person) => (
-    <span key={person} className="responsible-chip">
-      {person}
-    </span>
-  ));
+  return (
+    <div style={{ 
+      display: "flex", 
+      gap: "0.25rem", 
+      overflow: "hidden", 
+      whiteSpace: "nowrap",
+      textOverflow: "ellipsis",
+      maxWidth: "100%"
+    }}>
+      {people.map((person) => (
+        <span key={person} className="responsible-chip" title={person}>
+          {person}
+        </span>
+      ))}
+    </div>
+  );
 };
 
 const getBarPosition = (startDate: Date | undefined, endDate: Date | undefined, projectStart: Date, totalColumns: number) => {
@@ -75,10 +86,20 @@ const getBarPosition = (startDate: Date | undefined, endDate: Date | undefined, 
   if (!startDate || !endDate) {
     return { columnStart: 1, span: 1 };
   }
-  let startIndex = Math.floor((startDate.getTime() - projectStart.getTime()) / dayMs);
-  let endIndex = Math.floor((endDate.getTime() - projectStart.getTime()) / dayMs);
+  
+  const s = new Date(startDate);
+  s.setHours(0, 0, 0, 0);
+  const e = new Date(endDate);
+  e.setHours(23, 59, 59, 999);
+  const ps = new Date(projectStart);
+  ps.setHours(0, 0, 0, 0);
+
+  let startIndex = Math.round((s.getTime() - ps.getTime()) / dayMs);
+  let endIndex = Math.floor((e.getTime() - ps.getTime()) / dayMs);
+  
   startIndex = clamp(startIndex, 0, totalColumns - 1);
   endIndex = clamp(Math.max(startIndex, endIndex), startIndex, totalColumns - 1);
+  
   return {
     columnStart: startIndex + 1,
     span: Math.max(1, endIndex - startIndex + 1)
@@ -98,28 +119,96 @@ export const ProjectPage = () => {
   const [modalConfig, setModalConfig] = useState<ModalConfig>({ isOpen: false, entity: "stage" });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [justSaved, setJustSaved] = useState(false); // Флаг, что только что сохранили
+  const isInitialMount = useRef(true);
+  const stagesLoadedRef = useRef(false);
+  const lastSavedStagesRef = useRef<string>(""); // Реф для отслеживания изменений данных
   const ganttTableRef = useRef<HTMLDivElement | null>(null);
   const [depsSvgSize, setDepsSvgSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
-  const [depsPaths, setDepsPaths] = useState<Array<{ key: string; d: string; stroke: string }>>([]);
+  const [depsPaths, setDepsPaths] = useState<Array<{ key: string; d: string; stroke: string; opacity: number; strokeWidth: number }>>([]);
+  const [hoveredEntity, setHoveredEntity] = useState<{ id: number; type: "stage" | "task" } | null>(null);
 
-  const creationDate = useMemo(() => 
-    projectDetails ? new Date(projectDetails.creationDate) : new Date(), 
-    [projectDetails]
-  );
-  const deadlineDate = useMemo(() => 
-    projectDetails ? new Date(projectDetails.deadline) : new Date(), 
-    [projectDetails]
-  );
+  // Функция для проверки, есть ли зависимость (прямая или косвенная)
+  // Используется для предотвращения циклических зависимостей в UI
+  const isDependentOn = useCallback((targetId: number, sourceId: number, entityType: "stage" | "task", currentStageId?: number): boolean => {
+    if (entityType === "stage") {
+      const sourceStage = stages.find(s => s.id === sourceId);
+      if (!sourceStage || !sourceStage.dependencies) return false;
+      if (sourceStage.dependencies.includes(targetId)) return true;
+      return sourceStage.dependencies.some(depId => isDependentOn(targetId, depId, "stage"));
+    } else {
+      const stage = stages.find(s => s.id === currentStageId);
+      if (!stage) return false;
+      const sourceTask = stage.tasks.find(t => t.id === sourceId);
+      if (!sourceTask || !sourceTask.dependencies) return false;
+      if (sourceTask.dependencies.includes(targetId)) return true;
+      return sourceTask.dependencies.some(depId => isDependentOn(targetId, depId, "task", currentStageId));
+    }
+  }, [stages]);
+
+  // Вычисляем доступные сущности для зависимостей в зависимости от того, что редактируем
+  const allAvailableEntities = useMemo(() => {
+    if (!modalConfig.isOpen) return [];
+
+    if (modalConfig.entity === "stage") {
+      // Для этапа доступны только другие этапы
+      return stages
+        .map(s => {
+          const isSelf = s.id === modalConfig.editingStageId;
+          const causesCircular = modalConfig.editingStageId ? isDependentOn(modalConfig.editingStageId, s.id, "stage") : false;
+          
+          return { 
+            id: s.id, 
+            name: s.name, 
+            type: "stage" as const,
+            disabled: isSelf || causesCircular
+          };
+        });
+    } else {
+      // Для задачи доступны только другие задачи в ТОМ ЖЕ этапе
+      const currentStage = stages.find(s => s.id === modalConfig.parentStageId);
+      if (!currentStage) return [];
+
+      return currentStage.tasks
+        .map(t => {
+          const isSelf = t.id === modalConfig.editingTaskId;
+          const causesCircular = modalConfig.editingTaskId ? isDependentOn(modalConfig.editingTaskId, t.id, "task", modalConfig.parentStageId) : false;
+
+          return { 
+            id: t.id, 
+            name: t.name, 
+            type: "task" as const,
+            disabled: isSelf || causesCircular
+          };
+        });
+    }
+  }, [modalConfig.isOpen, modalConfig.entity, modalConfig.editingStageId, modalConfig.editingTaskId, modalConfig.parentStageId, stages, isDependentOn]);
+
+  const creationDate = useMemo(() => {
+    const date = projectDetails ? new Date(projectDetails.creationDate) : new Date();
+    date.setHours(0, 0, 0, 0); // Всегда нормализуем к началу дня
+    return date;
+  }, [projectDetails]);
+  const deadlineDate = useMemo(() => {
+    const date = projectDetails ? new Date(projectDetails.deadline) : new Date();
+    date.setHours(23, 59, 59, 999);
+    return date;
+  }, [projectDetails]);
 
   const dateRange = useMemo(() => {
-    if (deadlineDate < creationDate) {
-      return [creationDate];
+    const start = new Date(creationDate);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(deadlineDate);
+    end.setHours(23, 59, 59, 999);
+    
+    if (end < start) {
+      return [start];
     }
-    return getDatesBetween(creationDate, deadlineDate);
+    return getDatesBetween(start, end);
   }, [creationDate, deadlineDate]);
 
-  const durationDays = Math.max(1, dateRange.length);
+  const durationDays = dateRange.length;
   const gridTemplate = `320px 200px repeat(${dateRange.length}, 70px)`;
 
   const isSameLocalDay = (a: Date, b: Date) =>
@@ -394,22 +483,6 @@ export const ProjectPage = () => {
           }
         }
         
-        if (task.dependencies) {
-          for (const depId of task.dependencies) {
-            if (depId !== task.id) {
-              const depStage = updatedStages.find((s) => s.id === depId);
-              if (depStage) {
-                processStage(depStage);
-                const depEnd = getEndDate(depStage);
-                if (!minDependentTaskStart || depEnd < minDependentTaskStart) {
-                  minDependentTaskStart = new Date(depEnd);
-                  minDependentTaskStart.setDate(minDependentTaskStart.getDate() + 1);
-                }
-              }
-            }
-          }
-        }
-        
         let taskEndDate: Date;
         if (minDependentTaskStart) {
           taskEndDate = new Date(minDependentTaskStart);
@@ -507,6 +580,9 @@ export const ProjectPage = () => {
             setTeamMembers(teamData.members.map(m => m.full_name));
         }
 
+        // Помечаем, что начальные данные загружены
+        stagesLoadedRef.current = true;
+
       } catch (error) {
         console.error("Failed to load project data", error);
       } finally {
@@ -542,22 +618,15 @@ export const ProjectPage = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deadlineDate, creationDate, projectDetails, loading, justSaved]); // When dates, project details, loading state, or justSaved changes
 
-  const handleSaveProject = async () => {
+  const handleSaveProject = useCallback(async () => {
     if (!projectId) return;
     try {
       setSaving(true);
+      setSaveStatus("saving");
       
-      // Сохраняем текущий порядок для сравнения
-      const orderBeforeSave = stages.map((s, si) => ({
-        stageIndex: si,
-        stageId: s.id,
-        stageName: s.name,
-        tasks: s.tasks.map((t, ti) => ({ taskIndex: ti, taskId: t.id, taskName: t.name }))
-      }));
-      console.log("Order BEFORE save:", orderBeforeSave);
+      const currentStagesJson = JSON.stringify(stages);
       
       // Map local stages to API payload
-      // Создаем маппинг ID -> позиция для этапов и задач
       const stageIdToIndex = new Map<number, number>();
       stages.forEach((stage, index) => {
         stageIdToIndex.set(stage.id, index);
@@ -576,7 +645,6 @@ export const ProjectPage = () => {
         is_completed: s.isCompleted,
         responsibles: s.responsibles || [],
         feedback: s.feedback,
-        // Преобразуем зависимости этапов: ID -> позиция в массиве (для маппинга на бэкенде)
         dependencies: (s.dependencies || []).map(depId => stageIdToIndex.get(depId) ?? -1).filter(idx => idx !== -1),
         tasks: s.tasks.map((t, taskIndex) => ({
             name: t.name,
@@ -584,57 +652,71 @@ export const ProjectPage = () => {
             is_completed: t.isCompleted,
             responsibles: t.responsibles || [],
             feedback: t.feedback,
-            // Преобразуем зависимости задач: ID -> позиция
-            // Используем формулу: stage_index * 10000 + task_index для задач
-            // Используем отрицательные числа для этапов: -(stage_index + 1)
             dependencies: (t.dependencies || []).map(depId => {
-              // Сначала проверяем, является ли это задачей
               const taskInfo = taskIdToIndex.get(depId);
               if (taskInfo) {
-                // Это задача - используем формулу stage_index * 10000 + task_index
                 return taskInfo.stageIndex * 10000 + taskInfo.taskIndex;
               }
-              // Проверяем, является ли это этапом
               const stageDepIndex = stageIdToIndex.get(depId);
               if (stageDepIndex !== undefined) {
-                // Это этап - используем отрицательное число
                 return -(stageDepIndex + 1);
               }
-              return -999999; // Не найдено
+              return -999999;
             }).filter(idx => idx !== -999999)
         }))
       }));
-      
+
       await projectsApi.updateStages(Number(projectId), payload);
       
-      // После успешного сохранения НЕ меняем состояние вообще - ничего не делаем
-      // Текущий порядок и все данные остаются как есть
-      // Даты уже пересчитаны в текущем состоянии, поэтому ничего делать не нужно
+      setSaveStatus("saved");
+      lastSavedStagesRef.current = currentStagesJson;
       
-      // Устанавливаем флаг, что только что сохранили, чтобы useEffect не сработал
+      setTimeout(() => setSaveStatus("idle"), 3000);
       setJustSaved(true);
-      
-      // Через небольшую задержку сбрасываем флаг (чтобы useEffect мог сработать при других изменениях)
       setTimeout(() => {
         setJustSaved(false);
       }, 2000);
       
-      alert("Проект успешно сохранен!");
-      
     } catch (error: any) {
       console.error("Failed to save project", error);
-      console.error("Error details:", {
-        message: error?.message,
-        response: error?.response?.data,
-        status: error?.response?.status,
-        stack: error?.stack
-      });
-      const errorMessage = error?.response?.data?.detail || error?.message || "Неизвестная ошибка";
-      alert(`Ошибка при сохранении: ${errorMessage}`);
+      setSaveStatus("error");
     } finally {
       setSaving(false);
     }
-  };
+  }, [projectId, stages]);
+
+  // Эффект автосохранения
+  useEffect(() => {
+    if (loading) return;
+    
+    // Ждем, пока данные загрузятся первый раз из API
+    if (!stagesLoadedRef.current) return;
+
+    const currentStagesJson = JSON.stringify(stages);
+    
+    // Если это самый первый проход после загрузки - запоминаем состояние и выходим
+    if (lastSavedStagesRef.current === "") {
+      console.log("Initial stages state captured, auto-save ready");
+      lastSavedStagesRef.current = currentStagesJson;
+      return;
+    }
+
+    // Если данные не изменились - не сохраняем
+    if (currentStagesJson === lastSavedStagesRef.current) {
+      return;
+    }
+
+    // Если сейчас идет сохранение - не запускаем авто
+    if (saving) return;
+
+    console.log("Auto-save scheduled in 3 seconds...");
+    const timeoutId = setTimeout(() => {
+      console.log("Executing auto-save...");
+      handleSaveProject();
+    }, 3000);
+
+    return () => clearTimeout(timeoutId);
+  }, [stages, loading, saving, handleSaveProject]);
 
   const openStageModal = (stage?: Stage) => {
     setModalConfig({
@@ -646,7 +728,8 @@ export const ProjectPage = () => {
             name: stage.name,
             responsibles: stage.responsibles,
             duration: stage.duration,
-            feedback: stage.feedback
+            feedback: stage.feedback,
+            dependencies: stage.dependencies
           }
         : undefined
     });
@@ -663,7 +746,8 @@ export const ProjectPage = () => {
             name: task.name,
             responsibles: task.responsibles,
             duration: task.duration,
-            feedback: task.feedback
+            feedback: task.feedback,
+            dependencies: task.dependencies
           }
         : undefined
     });
@@ -685,7 +769,7 @@ export const ProjectPage = () => {
                   responsibles: values.responsibles,
                   duration: values.duration,
                   feedback: values.feedback,
-                  dependencies: stage.dependencies || [] // Сохраняем зависимости при редактировании
+                  dependencies: values.dependencies || []
                 }
               : stage
           );
@@ -700,7 +784,7 @@ export const ProjectPage = () => {
           feedback: values.feedback,
           isCompleted: false,
           tasks: [],
-          dependencies: [] // Инициализируем пустым массивом
+          dependencies: values.dependencies || []
         };
         setStages((prev) => {
           const updated = [...prev, newStage];
@@ -724,7 +808,7 @@ export const ProjectPage = () => {
                       responsibles: values.responsibles,
                       duration: values.duration,
                       feedback: values.feedback,
-                      dependencies: task.dependencies || [] // Сохраняем зависимости при редактировании
+                      dependencies: values.dependencies || []
                     }
                   : task
               )
@@ -737,7 +821,7 @@ export const ProjectPage = () => {
             duration: values.duration,
             feedback: values.feedback,
             isCompleted: false,
-            dependencies: [] // Инициализируем пустым массивом
+            dependencies: values.dependencies || []
           };
           return {
             ...stage,
@@ -995,9 +1079,15 @@ export const ProjectPage = () => {
     const { columnStart, span } = getBarPosition(startDate, endDate, creationDate, dateRange.length);
     const isDragging = draggedItem?.type === "stage" && draggedItem.id === stage.id;
     const isDragOver = dragOverTarget?.type === "stage" && dragOverTarget.id === stage.id;
-    
-    return (
-      <div key={`stage-${stage.id}`} className="gantt-row" style={{ gridTemplateColumns: gridTemplate }}>
+
+  return (
+      <div 
+        key={`stage-${stage.id}`} 
+        className="gantt-row" 
+        style={{ gridTemplateColumns: gridTemplate }}
+        onMouseEnter={() => setHoveredEntity({ id: stage.id, type: "stage" })}
+        onMouseLeave={() => setHoveredEntity(null)}
+      >
         <div className="gantt-label-cell">
           <div
             className="stage-row-content"
@@ -1011,10 +1101,13 @@ export const ProjectPage = () => {
               background: isDragOver ? "rgba(59, 130, 246, 0.1)" : "transparent",
               borderRadius: "8px",
               padding: "0.25rem",
-              cursor: "grab"
+              cursor: "grab",
+              width: "100%",
+              minWidth: 0,
+              overflow: "hidden"
             }}
           >
-            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "nowrap", overflow: "hidden" }}>
               <input
                 type="checkbox"
                 checked={stage.isCompleted}
@@ -1023,15 +1116,25 @@ export const ProjectPage = () => {
                   toggleStageCompletion(stage.id);
                 }}
                 onClick={(e) => e.stopPropagation()}
-                style={{ cursor: "pointer", width: "18px", height: "18px" }}
+                style={{ cursor: "pointer", width: "18px", height: "18px", flexShrink: 0 }}
               />
               <span
-                style={{ fontWeight: 600, color: "#0f172a", cursor: "pointer", flex: 1, minWidth: "120px" }}
+                style={{ 
+                  fontWeight: 600, 
+                  color: "#0f172a", 
+                  cursor: "pointer", 
+                  flex: 1, 
+                  minWidth: 0,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis"
+                }}
                 onClick={() => openStageModal(stage)}
+                title={stage.name}
               >
-                📁 {stage.name}
+                {stage.name}
               </span>
-              <div style={{ display: "flex", gap: "0.35rem", alignItems: "center" }}>
+              <div style={{ display: "flex", gap: "0.35rem", alignItems: "center", flexShrink: 0 }}>
                 <button
                   type="button"
                   title="Добавить задачу"
@@ -1070,20 +1173,32 @@ export const ProjectPage = () => {
                     borderRadius: "8px",
                     border: "1px solid rgba(239, 68, 68, 0.35)",
                     background: "white",
-                    fontSize: "1rem",
+                    fontSize: "1.2rem",
                     color: "#dc2626",
                     cursor: "pointer",
                     display: "flex",
                     alignItems: "center",
-                    justifyContent: "center"
+                    justifyContent: "center",
+                    lineHeight: 1
                   }}
                 >
-                  🗑
+                  ×
                 </button>
               </div>
             </div>
             {stage.feedback && (
-              <div style={{ color: "#475569", fontSize: "0.85rem", marginTop: "0.25rem", paddingLeft: "28px" }}>
+              <div 
+                style={{ 
+                  color: "#475569", 
+                  fontSize: "0.85rem", 
+                  marginTop: "0.25rem", 
+                  paddingLeft: "28px",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis"
+                }} 
+                title={stage.feedback}
+              >
                 {stage.feedback}
               </div>
             )}
@@ -1113,7 +1228,13 @@ export const ProjectPage = () => {
     const isDragOver = dragOverTarget?.type === "task" && dragOverTarget.id === task.id && dragOverTarget.stageId === stage.id;
     
     return (
-      <div key={`task-${task.id}`} className="gantt-row" style={{ gridTemplateColumns: gridTemplate }}>
+      <div 
+        key={`task-${task.id}`} 
+        className="gantt-row" 
+        style={{ gridTemplateColumns: gridTemplate }}
+        onMouseEnter={() => setHoveredEntity({ id: task.id, type: "task" })}
+        onMouseLeave={() => setHoveredEntity(null)}
+      >
         <div className="gantt-label-cell task">
           <div
             className="task-row-content"
@@ -1127,10 +1248,13 @@ export const ProjectPage = () => {
               background: isDragOver ? "rgba(59, 130, 246, 0.1)" : "transparent",
               borderRadius: "8px",
               padding: "0.25rem",
-              cursor: "grab"
+              cursor: "grab",
+              width: "100%",
+              minWidth: 0,
+              overflow: "hidden"
             }}
           >
-            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "nowrap", overflow: "hidden" }}>
               <input
                 type="checkbox"
                 checked={task.isCompleted}
@@ -1139,13 +1263,23 @@ export const ProjectPage = () => {
                   toggleTaskCompletion(stage.id, task.id);
                 }}
                 onClick={(e) => e.stopPropagation()}
-                style={{ cursor: "pointer", width: "18px", height: "18px" }}
+                style={{ cursor: "pointer", width: "18px", height: "18px", flexShrink: 0 }}
               />
               <span
-                style={{ fontWeight: 500, color: "#0f172a", cursor: "pointer", flex: 1, minWidth: "120px" }}
+                style={{ 
+                  fontWeight: 500, 
+                  color: "#0f172a", 
+                  cursor: "pointer", 
+                  flex: 1, 
+                  minWidth: 0,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis"
+                }}
                 onClick={() => openTaskModal(stage.id, task)}
+                title={task.name}
               >
-                ↳ {task.name}
+                {task.name}
               </span>
               <button
                 type="button"
@@ -1161,19 +1295,32 @@ export const ProjectPage = () => {
                   borderRadius: "8px",
                   border: "1px solid rgba(239, 68, 68, 0.35)",
                   background: "white",
-                  fontSize: "1rem",
+                  fontSize: "1.2rem",
                   color: "#dc2626",
                   cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
-                  justifyContent: "center"
+                  justifyContent: "center",
+                  lineHeight: 1,
+                  flexShrink: 0
                 }}
               >
-                🗑
+                ×
               </button>
             </div>
             {task.feedback && (
-              <div style={{ color: "#475569", fontSize: "0.85rem", marginTop: "0.25rem", paddingLeft: "28px" }}>
+              <div 
+                style={{ 
+                  color: "#475569", 
+                  fontSize: "0.85rem", 
+                  marginTop: "0.25rem", 
+                  paddingLeft: "28px",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis"
+                }} 
+                title={task.feedback}
+              >
                 {task.feedback}
               </div>
             )}
@@ -1195,55 +1342,25 @@ export const ProjectPage = () => {
     );
   };
 
-  const buildRoundedFourTurnPath = (
+  const buildBezierPath = (
     from: { left: number; top: number; right: number; bottom: number },
     to: { left: number; top: number; right: number; bottom: number }
   ) => {
-    const startX = from.right;
+    // from = Зависимый (например, Этап 3), to = Предшественник (Этап 1 или 2)
+    // Линия выходит из ЛЕВОГО края зависимого и плавно идет к ПРАВОМУ краю предшественника
+    const startX = from.left;
     const startY = (from.top + from.bottom) / 2;
-    // End slightly INSIDE the target bar, so the arrowhead doesn't sit on top like a "play" button.
-    const endX = to.left + 6;
+    const endX = to.right;
     const endY = (to.top + to.bottom) / 2;
 
-    // Route with 4 turns (as requested):
-    // 1) slightly right from the source
-    // 2) down under the source
-    // 3) left under the source
-    // 4) down to the target's mid Y
-    // 5) right into the target start
-    const r = 8; // corner radius
-    const out = 14; // initial horizontal nudge from the source
-    const gapUnderSource = 18;
+    const deltaX = Math.abs(startX - endX);
+    // Чем дальше элементы, тем сильнее изгиб, но не менее 40px
+    const curvature = Math.max(deltaX * 0.5, 40);
 
-    const underSourceY = from.bottom + gapUnderSource;
-
-    // Keep the "left corridor" safely to the left of the target start, so last segment goes right into it.
-    const leftCorridorX = Math.min(startX + out, endX - 28);
-
-    const q = (cx: number, cy: number, x: number, y: number) => `Q ${cx} ${cy} ${x} ${y}`;
-
-    // Build with rounded corners (single quadratic at each turn)
-    return [
-      // start -> right
-      `M ${startX} ${startY}`,
-      `L ${startX + out - r} ${startY}`,
-      q(startX + out, startY, startX + out, startY + r),
-
-      // down under source
-      `L ${startX + out} ${underSourceY - r}`,
-      q(startX + out, underSourceY, startX + out - r, underSourceY),
-
-      // left under source
-      `L ${leftCorridorX + r} ${underSourceY}`,
-      q(leftCorridorX, underSourceY, leftCorridorX, underSourceY + r),
-
-      // down to target mid
-      `L ${leftCorridorX} ${endY - r}`,
-      q(leftCorridorX, endY, leftCorridorX + r, endY),
-
-      // right into target start (slightly inside)
-      `L ${endX} ${endY}`
-    ].join(" ");
+    // Кубическая кривая Безье:
+    // M startX startY (точка начала)
+    // C cp1X startY (контрольная точка 1), cp2X endY (контрольная точка 2), endX endY (точка конца)
+    return `M ${startX} ${startY} C ${startX - curvature} ${startY}, ${endX + curvature} ${endY}, ${endX} ${endY}`;
   };
 
   const recomputeDependencyOverlay = useCallback(() => {
@@ -1271,7 +1388,7 @@ export const ProjectPage = () => {
       });
     }
 
-    const nextPaths: Array<{ key: string; d: string; stroke: string }> = [];
+    const nextPaths: Array<{ key: string; d: string; stroke: string; opacity: number; strokeWidth: number }> = [];
 
     for (const stage of stages) {
       const stageKey = `stage:${stage.id}`;
@@ -1281,10 +1398,15 @@ export const ProjectPage = () => {
           const fromKey = `stage:${depId}`;
           const fromRect = rectByKey.get(fromKey);
           if (!fromRect) continue;
+
+          const isHighlighted = hoveredEntity?.type === "stage" && (hoveredEntity.id === stage.id || hoveredEntity.id === depId);
+
           nextPaths.push({
-            key: `s:${depId}->${stage.id}`,
-            d: buildRoundedFourTurnPath(fromRect, stageRect),
-            stroke: "rgba(14, 165, 233, 0.75)"
+            key: `s:${stage.id}->${depId}`,
+            d: buildBezierPath(stageRect, fromRect),
+            stroke: isHighlighted ? "#3b82f6" : "rgba(148, 163, 184, 0.4)",
+            opacity: isHighlighted ? 1 : 0.6,
+            strokeWidth: isHighlighted ? 2 : 1.2
           });
         }
       }
@@ -1296,24 +1418,36 @@ export const ProjectPage = () => {
 
         for (const depId of task.dependencies) {
           const fromTaskKey = `task:${depId}`;
-          const fromStageKey = `stage:${depId}`;
-          const fromRect = rectByKey.get(fromTaskKey) ?? rectByKey.get(fromStageKey);
+          const fromRect = rectByKey.get(fromTaskKey);
           if (!fromRect) continue;
+
+          const isHighlighted = hoveredEntity?.type === "task" && (hoveredEntity.id === task.id || hoveredEntity.id === depId);
+
           nextPaths.push({
-            key: `t:${depId}->${task.id}`,
-            d: buildRoundedFourTurnPath(fromRect, taskRect),
-            stroke: "rgba(16, 185, 129, 0.75)"
+            key: `t:${task.id}->${depId}`,
+            d: buildBezierPath(taskRect, fromRect),
+            stroke: isHighlighted ? "#10b981" : "rgba(148, 163, 184, 0.4)",
+            opacity: isHighlighted ? 1 : 0.6,
+            strokeWidth: isHighlighted ? 2 : 1.2
           });
         }
       }
     }
 
+    console.log(`Recomputed dependency overlay: ${nextPaths.length} paths found`);
     setDepsPaths(nextPaths);
-  }, [stages]);
+  }, [stages, hoveredEntity]);
 
   useLayoutEffect(() => {
-    recomputeDependencyOverlay();
-  }, [recomputeDependencyOverlay, dateRange.length, gridTemplate]);
+    if (!loading && stages.length > 0) {
+      // Используем небольшой таймаут, чтобы дать браузеру время на отрисовку таблицы
+      // и корректный расчет координат элементов через getBoundingClientRect
+      const timer = setTimeout(() => {
+        recomputeDependencyOverlay();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [recomputeDependencyOverlay, loading, stages.length, dateRange.length, gridTemplate]);
 
   useEffect(() => {
     const onResize = () => recomputeDependencyOverlay();
@@ -1340,6 +1474,7 @@ export const ProjectPage = () => {
       <Header />
       <div style={{ flex: 1, padding: "1.5rem 2rem 2rem", width: "100%" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
         <button
           onClick={() => navigate(-1)}
           style={{
@@ -1356,28 +1491,44 @@ export const ProjectPage = () => {
         >
           ← Назад
         </button>
-
-          <button
-            onClick={handleSaveProject}
-            disabled={saving}
-            style={{
-              padding: "0.75rem 1.5rem",
-              borderRadius: "10px",
-              border: "none",
-              background: saving ? "#94a3b8" : "linear-gradient(135deg, #10b981, #059669)",
-              color: "white",
-              fontSize: "1rem",
-              fontWeight: 600,
-              cursor: saving ? "wait" : "pointer",
-              boxShadow: "0 4px 12px rgba(16, 185, 129, 0.2)"
-            }}
-          >
-            {saving ? "Сохранение..." : "Сохранить изменения"}
-          </button>
+            <div style={{ 
+              marginBottom: "1.5rem",
+              fontSize: "0.9rem", 
+              color: saveStatus === "error" ? "#dc2626" : "#64748b",
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem"
+            }}>
+              {saveStatus === "saving" && (
+                <>
+                  <span style={{ 
+                    width: "8px", 
+                    height: "8px", 
+                    borderRadius: "50%", 
+                    background: "#3b82f6",
+                    display: "inline-block",
+                    animation: "pulse 1.5s infinite"
+                  }} />
+                  Сохранение...
+                </>
+              )}
+              {saveStatus === "saved" && "✓ Сохранено"}
+              {saveStatus === "error" && "× Ошибка сохранения"}
+            </div>
+          </div>
         </div>
 
-        <div style={{ marginBottom: "1.5rem" }}>
-            <h1 style={{ fontSize: "2rem", color: "#1d4ed8", marginBottom: "0.5rem" }}>{projectDetails.name}</h1>
+        <div style={{ marginBottom: "1.5rem", maxWidth: "100%" }}>
+            <h1 style={{ 
+              fontSize: "2rem", 
+              color: "#1d4ed8", 
+              marginBottom: "0.5rem",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis"
+            }} title={projectDetails.name}>
+              {projectDetails.name}
+            </h1>
             <p style={{ color: "#475569" }}>Команда: {teamName}</p>
             <p style={{ color: "#94a3b8", fontSize: "0.9rem" }}>
               Длительность проекта: {durationDays} дн. (с {creationDate.toLocaleDateString("ru-RU")} по {deadlineDate.toLocaleDateString("ru-RU")})
@@ -1400,11 +1551,11 @@ export const ProjectPage = () => {
                     viewBox="0 0 10 10"
                     refX="9"
                     refY="5"
-                    markerWidth="8"
-                    markerHeight="8"
+                    markerWidth="6"
+                    markerHeight="6"
                     orient="auto-start-reverse"
                   >
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(30, 41, 59, 0.55)" />
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
                   </marker>
                 </defs>
 
@@ -1414,17 +1565,19 @@ export const ProjectPage = () => {
                     d={p.d}
                     fill="none"
                     stroke={p.stroke}
-                    strokeWidth={2}
+                    strokeWidth={p.strokeWidth}
+                    opacity={p.opacity}
                     markerEnd="url(#ganttArrow)"
                     strokeLinecap="round"
                     strokeLinejoin="round"
+                    style={{ transition: "all 0.2s ease", color: p.stroke }}
                   />
                 ))}
               </svg>
             )}
             <div className="gantt-header-row" style={{ gridTemplateColumns: gridTemplate }}>
-            <div className="gantt-header-cell label">Этапы / задачи</div>
-              <div className="gantt-header-cell label">Ответственные</div>
+            <div className="gantt-header-cell label" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Этапы / задачи</div>
+              <div className="gantt-header-cell label" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Ответственные</div>
             {dateRange.map((date) => {
               const today = new Date();
               const isToday = isSameLocalDay(date, today);
@@ -1436,7 +1589,7 @@ export const ProjectPage = () => {
                   <div className="gantt-header-day">
                 <strong>{date.getDate()}</strong>
                     {isToday && <span className="gantt-today-dot" aria-hidden="true" />}
-                  </div>
+              </div>
               </div>
               );
             })}
@@ -1444,28 +1597,41 @@ export const ProjectPage = () => {
 
             <div className="gantt-row" style={{ gridTemplateColumns: gridTemplate }}>
             <div className="gantt-label-cell">
-              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
-                <span style={{ fontWeight: 600, color: "#0f172a", flex: 1, minWidth: "120px" }}>📁 {projectDetails.name}</span>
-                <button
-                  title="Добавить этап"
-                  onClick={() => openStageModal()}
-                  style={{
-                    width: "28px",
-                    height: "28px",
-                    borderRadius: "8px",
-                    border: "1px solid rgba(148, 163, 184, 0.35)",
-                    background: "white",
-                    fontSize: "1rem",
-                    fontWeight: 600,
-                    color: "#2563eb",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center"
-                  }}
-                >
-                  +
-                </button>
+              <div style={{ width: "100%", minWidth: 0, overflow: "hidden" }}>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "nowrap", overflow: "hidden" }}>
+                  <span style={{ 
+                    fontWeight: 600, 
+                    color: "#0f172a", 
+                    flex: 1, 
+                    minWidth: 0,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis"
+                  }} title={projectDetails.name}>
+                    {projectDetails.name}
+                  </span>
+                  <button
+                      title="Добавить этап"
+                      onClick={() => openStageModal()}
+                      style={{
+                        width: "28px",
+                        height: "28px",
+                        borderRadius: "8px",
+                        border: "1px solid rgba(148, 163, 184, 0.35)",
+                        background: "white",
+                        fontSize: "1rem",
+                        fontWeight: 600,
+                        color: "#2563eb",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0
+                      }}
+                    >
+                      +
+                    </button>
+                  </div>
               </div>
             </div>
               <div className="responsible-cell">
@@ -1474,9 +1640,9 @@ export const ProjectPage = () => {
               <div className="gantt-grid" style={{ gridTemplateColumns: `repeat(${dateRange.length}, 70px)` }}>
                 <div className="gantt-bar project" style={{ gridColumn: `1 / span ${dateRange.length}` }} onClick={() => openStageModal()}>
                 <span>{durationDays} дн.</span>
-                </div>
               </div>
             </div>
+          </div>
 
             {stages.map((stage) => (
               <Fragment key={stage.id}>
@@ -1484,14 +1650,15 @@ export const ProjectPage = () => {
                 {stage.tasks.map((task) => renderTaskRow(stage, task))}
               </Fragment>
             ))}
-          </div>
         </div>
+      </div>
       </div>
 
       <StageTaskModal
         isOpen={modalConfig.isOpen}
         entityLabel={modalConfig.entity === "stage" ? "этап" : "задачу"}
         teamMembers={teamMembers}
+        allAvailableEntities={allAvailableEntities}
         onClose={closeModal}
         onSubmit={handleStageTaskSubmit}
         initialValues={modalConfig.initialValues}
