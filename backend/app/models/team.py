@@ -26,6 +26,7 @@ class Team(Base):
     owner = relationship("Student", backref="owned_teams")
     members = relationship("Student", secondary=team_members, backref="teams")
     projects = relationship("Project", back_populates="team", cascade="all, delete-orphan")
+    invitations = relationship("TeamInvitation", back_populates="team", cascade="all, delete-orphan")
 
     @property
     def project_count(self):

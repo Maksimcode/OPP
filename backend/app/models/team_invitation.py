@@ -25,7 +25,7 @@ class TeamInvitation(Base):
     responded_at = Column(DateTime, nullable=True)
 
     # Relationships
-    team = relationship("Team", backref="invitations")
+    team = relationship("Team", back_populates="invitations")
     invited_by = relationship("Student", foreign_keys=[invited_by_id], backref="sent_invitations")
     invited_user = relationship("Student", foreign_keys=[invited_user_id], backref="received_invitations")
 

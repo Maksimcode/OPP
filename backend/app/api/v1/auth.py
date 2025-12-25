@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user, get_db
 from app.core.security import create_access_token, create_refresh_token, decode_token
-from app.db.session import get_db
 from app.schemas import auth as auth_schema
 from app.schemas.student import StudentCreate, StudentRead
 from app.services.student_service import StudentService
@@ -50,3 +50,8 @@ def refresh_token(request: auth_schema.RefreshRequest):
     access_token = create_access_token(subject)
     refresh_token = create_refresh_token(subject)
     return auth_schema.Token(access_token=access_token, refresh_token=refresh_token)
+
+
+@router.get("/me", response_model=StudentRead)
+def get_me(current_user: StudentRead = Depends(get_current_user)):
+    return current_user

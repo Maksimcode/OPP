@@ -1,40 +1,48 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { authApi, User } from "../api/auth";
 import { Team, teamsApi } from "../api/teams";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { CreateTeamModal } from "../components/CreateTeamModal";
 import { EditTeamModal } from "../components/EditTeamModal";
 import { Header } from "../components/Header";
+import { TeamMembersModal } from "../components/TeamMembersModal";
 
 export const Dashboard = () => {
   const navigate = useNavigate();
   const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
+  
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
+  const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
+  
   const [editingTeam, setEditingTeam] = useState<Team | null>(null);
   const [deletingTeam, setDeletingTeam] = useState<Team | null>(null);
+  const [leavingTeam, setLeavingTeam] = useState<Team | null>(null);
+  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
 
-  const loadTeams = useCallback(async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await teamsApi.getAll();
-      setTeams(data);
+      const teamsData = await teamsApi.getAll();
+      setTeams(teamsData);
     } catch (error) {
-      console.error("Failed to load teams", error);
+      console.error("Failed to load dashboard data", error);
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    loadTeams();
+    loadData();
     
     // Слушаем событие обновления команд (например, после принятия приглашения)
     const handleTeamsUpdate = () => {
-      loadTeams();
+      loadData();
     };
     
     window.addEventListener("teamsUpdated", handleTeamsUpdate);
@@ -42,7 +50,7 @@ export const Dashboard = () => {
     return () => {
       window.removeEventListener("teamsUpdated", handleTeamsUpdate);
     };
-  }, [loadTeams]);
+  }, [loadData]);
 
   const handleCreateTeam = async (name: string) => {
     try {
@@ -89,6 +97,37 @@ export const Dashboard = () => {
       alert("Ошибка при удалении команды");
       setIsDeleteModalOpen(false);
       setDeletingTeam(null);
+    }
+  };
+
+  const handleLeaveTeam = (team: Team) => {
+    setLeavingTeam(team);
+    setIsLeaveModalOpen(true);
+  };
+
+  const handleConfirmLeaveTeam = async () => {
+    if (!leavingTeam) return;
+    try {
+      await teamsApi.leave(leavingTeam.id);
+      setTeams(teams.filter((t) => t.id !== leavingTeam.id));
+      setIsLeaveModalOpen(false);
+      setLeavingTeam(null);
+    } catch (error) {
+      console.error("Failed to leave team", error);
+      alert("Ошибка при выходе из команды");
+      setIsLeaveModalOpen(false);
+      setLeavingTeam(null);
+    }
+  };
+
+  const handleViewMembers = async (team: Team) => {
+    try {
+      const fullTeam = await teamsApi.getOne(team.id);
+      setSelectedTeam(fullTeam);
+      setIsMembersModalOpen(true);
+    } catch (error) {
+      console.error("Failed to load team members", error);
+      alert("Ошибка при загрузке участников");
     }
   };
 
@@ -197,13 +236,50 @@ export const Dashboard = () => {
                     onClick={() => handleTeamClick(team.id)}
                     style={{
                       flex: 1,
-                      cursor: "pointer"
+                      cursor: "pointer",
+                      minWidth: 0
                     }}
                   >
-                    <h2 style={{ fontSize: "1.25rem", marginBottom: "0.5rem", color: "#0f172a" }}>{team.name}</h2>
+                    <h2 style={{ 
+                      fontSize: "1.25rem", 
+                      marginBottom: "0.5rem", 
+                      color: "#0f172a",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis"
+                    }} title={team.name}>
+                      {team.name}
+                    </h2>
                     <p style={{ color: "#475569" }}>Проектов: {team.project_count || 0}</p>
                   </div>
                   <div style={{ display: "flex", gap: "0.5rem", marginLeft: "1rem" }}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleViewMembers(team);
+                      }}
+                      style={{
+                        padding: "0.5rem 1rem",
+                        borderRadius: "10px",
+                        border: "1px solid rgba(148, 163, 184, 0.3)",
+                        background: "rgba(148, 163, 184, 0.1)",
+                        color: "#64748b",
+                        fontSize: "0.9rem",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        transition: "all 0.15s ease"
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = "translateY(-1px)";
+                        e.currentTarget.style.background = "rgba(148, 163, 184, 0.2)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = "translateY(0)";
+                        e.currentTarget.style.background = "rgba(148, 163, 184, 0.1)";
+                      }}
+                    >
+                      Участники
+                    </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -218,7 +294,7 @@ export const Dashboard = () => {
                         fontSize: "0.9rem",
                         fontWeight: 600,
                         cursor: "pointer",
-                        transition: "transform 0.15s ease"
+                        transition: "all 0.15s ease"
                       }}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.transform = "translateY(-1px)";
@@ -227,7 +303,32 @@ export const Dashboard = () => {
                         e.currentTarget.style.transform = "translateY(0)";
                       }}
                     >
-                      ✏️ Изменить
+                      Изменить
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleLeaveTeam(team);
+                      }}
+                      style={{
+                        padding: "0.5rem 1rem",
+                        borderRadius: "10px",
+                        border: "1px solid rgba(245, 158, 11, 0.3)",
+                        background: "rgba(245, 158, 11, 0.1)",
+                        color: "#f59e0b",
+                        fontSize: "0.9rem",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        transition: "all 0.15s ease"
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = "translateY(-1px)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = "translateY(0)";
+                      }}
+                    >
+                      Выйти
                     </button>
                     <button
                       onClick={(e) => {
@@ -243,7 +344,7 @@ export const Dashboard = () => {
                         fontSize: "0.9rem",
                         fontWeight: 600,
                         cursor: "pointer",
-                        transition: "transform 0.15s ease"
+                        transition: "all 0.15s ease"
                       }}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.transform = "translateY(-1px)";
@@ -252,7 +353,7 @@ export const Dashboard = () => {
                         e.currentTarget.style.transform = "translateY(0)";
                       }}
                     >
-                      🗑️ Удалить
+                      Удалить
                     </button>
                   </div>
                 </div>
@@ -288,6 +389,29 @@ export const Dashboard = () => {
         message="Вы действительно хотите удалить команду? Все проекты этой команды также будут удалены."
         confirmText="Удалить"
         danger={true}
+      />
+
+      <ConfirmModal
+        isOpen={isLeaveModalOpen}
+        onClose={() => {
+          setIsLeaveModalOpen(false);
+          setLeavingTeam(null);
+        }}
+        onConfirm={handleConfirmLeaveTeam}
+        title="Выйти из команды?"
+        message={`Вы действительно хотите выйти из команды "${leavingTeam?.name}"?`}
+        confirmText="Выйти"
+        danger={true}
+      />
+
+      <TeamMembersModal
+        isOpen={isMembersModalOpen}
+        onClose={() => {
+          setIsMembersModalOpen(false);
+          setSelectedTeam(null);
+        }}
+        members={selectedTeam?.members || []}
+        teamName={selectedTeam?.name || ""}
       />
     </div>
   );

@@ -5,12 +5,14 @@ export interface StageTaskFormValues {
   responsibles: string[];
   duration: number; // Количество дней
   feedback?: string;
+  dependencies?: number[];
 }
 
 interface StageTaskModalProps {
   isOpen: boolean;
   entityLabel: "этап" | "задачу";
   teamMembers: string[];
+  allAvailableEntities: { id: number; name: string; type: "stage" | "task"; disabled?: boolean }[];
   onClose: () => void;
   onSubmit: (values: StageTaskFormValues) => void;
   initialValues?: StageTaskFormValues;
@@ -20,6 +22,7 @@ export const StageTaskModal = ({
   isOpen,
   entityLabel,
   teamMembers,
+  allAvailableEntities,
   onClose,
   onSubmit,
   initialValues
@@ -27,8 +30,10 @@ export const StageTaskModal = ({
   const [name, setName] = useState("");
   const [responsibles, setResponsibles] = useState<string[]>([]);
   const [selectorOpen, setSelectorOpen] = useState(false);
-  const [duration, setDuration] = useState<number>(1);
+  const [depsSelectorOpen, setDepsSelectorOpen] = useState(false);
+  const [duration, setDuration] = useState<number | string>("");
   const [feedback, setFeedback] = useState("");
+  const [dependencies, setDependencies] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -38,14 +43,17 @@ export const StageTaskModal = ({
       setResponsibles(initialValues.responsibles ?? []);
       setDuration(initialValues.duration ?? 1);
       setFeedback(initialValues.feedback ?? "");
+      setDependencies(initialValues.dependencies ?? []);
     } else if (isOpen) {
       setName("");
       setResponsibles([]);
-      setDuration(1);
+      setDuration("");
       setFeedback("");
+      setDependencies([]);
     }
     setError(null);
     setSelectorOpen(false);
+    setDepsSelectorOpen(false);
   }, [initialValues, isOpen]);
 
   if (!isOpen) return null;
@@ -53,6 +61,12 @@ export const StageTaskModal = ({
   const handleResponsibleToggle = (member: string) => {
     setResponsibles((current) =>
       current.includes(member) ? current.filter((name) => name !== member) : [...current, member]
+    );
+  };
+
+  const handleDependencyToggle = (depId: number) => {
+    setDependencies((current) =>
+      current.includes(depId) ? current.filter((id) => id !== depId) : [...current, depId]
     );
   };
 
@@ -66,7 +80,9 @@ export const StageTaskModal = ({
       setError("Нужно выбрать хотя бы одного ответственного");
       return;
     }
-    if (!duration || duration < 1) {
+    
+    const parsedDuration = parseInt(String(duration), 10);
+    if (isNaN(parsedDuration) || parsedDuration < 1) {
       setError("Длительность должна быть минимум 1 день");
       return;
     }
@@ -75,8 +91,9 @@ export const StageTaskModal = ({
     onSubmit({
       name: name.trim(),
       responsibles,
-      duration: Math.floor(duration),
-      feedback: feedback.trim() || undefined
+      duration: Math.floor(parsedDuration),
+      feedback: feedback.trim() || undefined,
+      dependencies
     });
     setLoading(false);
     onClose();
@@ -214,6 +231,101 @@ export const StageTaskModal = ({
             )}
           </div>
 
+          <div style={{ marginBottom: "1.25rem" }}>
+            <span style={{ fontSize: "0.95rem", color: "#475569", fontWeight: 500 }}>
+              Предшествующие (зависимости)
+            </span>
+            <button
+              type="button"
+              onClick={() => setDepsSelectorOpen((prev) => !prev)}
+              style={{
+                marginTop: "0.5rem",
+                width: "100%",
+                padding: "0.75rem 1rem",
+                borderRadius: "12px",
+                border: "1px solid rgba(148, 163, 184, 0.35)",
+                background: "white",
+                textAlign: "left",
+                fontSize: "1rem",
+                cursor: "pointer"
+              }}
+            >
+              {dependencies.length 
+                ? allAvailableEntities
+                    .filter(e => dependencies.includes(e.id))
+                    .map(e => e.name)
+                    .join(", ") 
+                : "Выбрать зависимости"}
+            </button>
+            {depsSelectorOpen && (
+              <div
+                style={{
+                  marginTop: "0.75rem",
+                  border: "1px solid rgba(148, 163, 184, 0.35)",
+                  borderRadius: "12px",
+                  padding: "0.5rem",
+                  maxHeight: "180px",
+                  overflowY: "auto",
+                  background: "#f8fafc"
+                }}
+              >
+                {allAvailableEntities.length === 0 ? (
+                  <div style={{ padding: "0.5rem", color: "#94a3b8", fontSize: "0.9rem", textAlign: "center" }}>
+                    Нет доступных объектов для связей
+                  </div>
+                ) : (
+                  allAvailableEntities.map((entity) => {
+                    const isSelected = dependencies.includes(entity.id);
+                    const isDisabled = entity.disabled && !isSelected;
+                    return (
+                      <div
+                        key={entity.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "0.4rem 0.6rem",
+                          borderRadius: "10px",
+                          background: isSelected ? "rgba(59, 130, 246, 0.12)" : "transparent",
+                          color: isDisabled ? "#94a3b8" : (isSelected ? "#1d4ed8" : "#0f172a"),
+                          marginBottom: "2px",
+                          opacity: isDisabled ? 0.6 : 1,
+                          cursor: isDisabled ? "not-allowed" : "default"
+                        }}
+                      >
+                        <div style={{ display: "flex", flexDirection: "column" }}>
+                          <span style={{ fontSize: "0.95rem" }}>{entity.name}</span>
+                          <span style={{ fontSize: "0.75rem", color: isDisabled ? "#cbd5e1" : "#64748b" }}>
+                            {entity.type === "stage" ? "Этап" : "Задача"}
+                            {entity.disabled && !isSelected && " (Циклическая связь)"}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={isDisabled}
+                          onClick={() => handleDependencyToggle(entity.id)}
+                          style={{
+                            width: "32px",
+                            height: "32px",
+                            borderRadius: "10px",
+                            border: "none",
+                            fontSize: "1.2rem",
+                            fontWeight: 600,
+                            cursor: isDisabled ? "not-allowed" : "pointer",
+                            color: isSelected ? "#dc2626" : (isDisabled ? "#cbd5e1" : "#2563eb"),
+                            background: isSelected ? "rgba(248, 113, 113, 0.15)" : (isDisabled ? "#f1f5f9" : "rgba(59, 130, 246, 0.15)")
+                          }}
+                        >
+                          {isSelected ? "×" : "+"}
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+
           <label style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1.25rem" }}>
             <span style={{ fontSize: "0.95rem", color: "#475569", fontWeight: 500 }}>
               Длительность (количество дней) <span style={{ color: "#dc2626" }}>*</span>
@@ -221,9 +333,10 @@ export const StageTaskModal = ({
             <input
               type="number"
               value={duration}
-              onChange={(e) => setDuration(parseInt(e.target.value, 10) || 1)}
+              onChange={(e) => setDuration(e.target.value)}
               min={1}
               required
+              placeholder="Количество дней"
               style={{
                 padding: "0.75rem 1rem",
                 border: "1px solid rgba(148, 163, 184, 0.35)",

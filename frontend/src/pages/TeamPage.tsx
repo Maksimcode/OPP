@@ -279,16 +279,29 @@ export const TeamPage = () => {
                   alignItems: "flex-start"
                 }}
               >
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div
                     onClick={() => handleOpenProject(project)}
                     style={{ cursor: "pointer" }}
                   >
-                    <h2 style={{ fontSize: "1.25rem", marginBottom: "0.5rem", color: "#0f172a" }}>
+                    <h2 style={{ 
+                      fontSize: "1.25rem", 
+                      marginBottom: "0.5rem", 
+                      color: "#0f172a",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis"
+                    }}>
                       {project.name}
                     </h2>
                     {project.description && (
-                      <p style={{ color: "#475569", marginBottom: "0.75rem" }}>{project.description}</p>
+                      <p style={{ 
+                        color: "#475569", 
+                        marginBottom: "0.75rem",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis"
+                      }}>{project.description}</p>
                     )}
                     <p style={{ color: "#64748b", fontSize: "0.9rem", marginBottom: "0.25rem" }}>
                       Дедлайн: <strong>{formatDeadline(project.deadline)}</strong>
@@ -303,22 +316,7 @@ export const TeamPage = () => {
                     </p>
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: "0.5rem", marginLeft: "1rem" }}>
-                  <button
-                    onClick={() => handleOpenProject(project)}
-                    style={{
-                      padding: "0.5rem 1rem",
-                      borderRadius: "10px",
-                      border: "1px solid rgba(14, 165, 233, 0.3)",
-                      background: "rgba(14, 165, 233, 0.1)",
-                      color: "#0ea5e9",
-                      fontSize: "0.9rem",
-                      fontWeight: 600,
-                      cursor: "pointer"
-                    }}
-                  >
-                    📊 Диаграмма
-                  </button>
+                <div style={{ display: "flex", gap: "0.5rem", marginLeft: "1rem", flexShrink: 0 }}>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -342,7 +340,7 @@ export const TeamPage = () => {
                       e.currentTarget.style.transform = "translateY(0)";
                     }}
                   >
-                    ✏️ Изменить
+                    Изменить
                   </button>
                   <button
                     onClick={(e) => {
@@ -367,7 +365,7 @@ export const TeamPage = () => {
                       e.currentTarget.style.transform = "translateY(0)";
                     }}
                   >
-                    🗑️ Удалить
+                    Удалить
                   </button>
                 </div>
               </div>

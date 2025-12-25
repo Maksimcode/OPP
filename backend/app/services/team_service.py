@@ -78,7 +78,7 @@ class TeamService:
             False - команда найдена, но пользователь не является участником
             None - команда не найдена
         """
-        team = TeamService.get_team(db, team_id)
+        team = db.query(Team).filter(Team.id == team_id).first()
         if not team:
             return None
         
@@ -86,7 +86,8 @@ class TeamService:
         if not TeamService.is_user_member(db, team_id, user_id):
             return False
         
-        # Projects will be deleted cascade (see Team model: cascade="all, delete-orphan")
+        # All associated objects (projects, stages, tasks, invitations) 
+        # will be deleted via SQLAlchemy cascade rules
         db.delete(team)
         db.commit()
         return True
@@ -94,23 +95,54 @@ class TeamService:
     @staticmethod
     def is_user_member(db: Session, team_id: int, user_id: int) -> bool:
         """Проверяет, является ли пользователь участником команды (владелец или член)"""
-        team = TeamService.get_team(db, team_id)
+        team = db.query(Team).filter(Team.id == team_id).first()
         if not team:
             return False
         
-        # Проверяем, является ли пользователь владельцем
+        # Владелец всегда участник
         if team.owner_id == user_id:
             return True
         
-        # Проверяем, является ли пользователь участником через таблицу team_members
-        # Используем тот же подход, что и в get_user_teams
-        member_team_ids_subquery = db.query(team_members.c.team_id).filter(
+        # Прямой запрос к таблице связей через колонки (самый быстрый и надежный)
+        is_member = db.query(team_members.c.student_id).filter(
+            team_members.c.team_id == team_id,
             team_members.c.student_id == user_id
-        )
-        result = db.query(Team).filter(
-            Team.id == team_id,
-            Team.id.in_(member_team_ids_subquery)
-        ).first()
-        return result is not None
+        ).first() is not None
+        
+        return is_member
+
+    @staticmethod
+    def remove_member(db: Session, team_id: int, student_id: int) -> bool:
+        """Удаляет участника из команды. Если выходит последний участник — удаляет команду."""
+        team = TeamService.get_team(db, team_id)
+        if not team:
+            return False
+            
+        student = db.query(Student).filter(Student.id == student_id).first()
+        if not student:
+            return False
+        
+        # Проверяем, является ли пользователь участником
+        if student not in team.members:
+            return False
+
+        # Если это владелец, нужно передать права или удалить команду
+        if team.owner_id == student_id:
+            # Ищем другого участника, который не является уходящим владельцем
+            other_member = next((m for m in team.members if m.id != student_id), None)
+            
+            if other_member:
+                # Передаем владение следующему по списку
+                team.owner_id = other_member.id
+            else:
+                # Если больше никого нет — удаляем команду целиком
+                db.delete(team)
+                db.commit()
+                return True
+
+        # Удаляем пользователя из списка участников
+        team.members.remove(student)
+        db.commit()
+        return True
 
 

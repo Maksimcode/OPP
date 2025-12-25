@@ -6,7 +6,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { LoginPage } from "./pages/Login";
 import { RegisterPage } from "./pages/Register";
 import { TeamPage } from "./pages/TeamPage";
-import { ProjectPage } from "./pages/ProjectPage";
+import { ProjectPage } from "./pages/ProjectPage.tsx";
 
 function App() {
   return (

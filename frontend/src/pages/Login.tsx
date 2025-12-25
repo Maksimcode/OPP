@@ -11,7 +11,7 @@ interface LocationState {
 export const LoginPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { setAccessToken } = useAuth();
+  const { setTokens } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -23,8 +23,8 @@ export const LoginPage = () => {
     setError(null);
 
     try {
-      const { access_token } = await authApi.login({ email, password });
-      setAccessToken(access_token);
+      const { access_token, refresh_token } = await authApi.login({ email, password });
+      setTokens(access_token, refresh_token);
       const state = location.state as LocationState | undefined;
       navigate(state?.from?.pathname ?? "/");
     } catch (err) {

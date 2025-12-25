@@ -95,6 +95,9 @@ export const teamsApi = {
     await httpClient.post(`/teams/${teamId}/members`, null, {
       params: { email }
     });
+  },
+  leave: async (teamId: number): Promise<void> => {
+    await httpClient.post(`/teams/${teamId}/leave`);
   }
 };
 
